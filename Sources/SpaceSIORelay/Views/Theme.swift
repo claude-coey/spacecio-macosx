@@ -35,16 +35,19 @@ extension View {
 struct Wordmark: View {
     var size: CGFloat = 22
 
-    /// True when the brand PNG shipped in the SPM resource bundle is present
-    /// (it is for both `swift run` and the .app built by make-installer).
-    private var hasBrandAsset: Bool {
-        Bundle.module.url(forResource: "spacesio-logo", withExtension: "png") != nil
-    }
+    /// Loaded explicitly with NSImage(contentsOf:) — `Image(_:bundle:)` looks
+    /// in an ASSET CATALOG and silently renders nothing for a loose PNG in an
+    /// SPM resource bundle (the "lost logo" bug).
+    private static let brandImage: NSImage? = {
+        guard let url = Bundle.module.url(forResource: "spacesio-logo", withExtension: "png")
+        else { return nil }
+        return NSImage(contentsOf: url)
+    }()
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            if hasBrandAsset {
-                Image("spacesio-logo", bundle: .module)
+            if let brand = Self.brandImage {
+                Image(nsImage: brand)
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()

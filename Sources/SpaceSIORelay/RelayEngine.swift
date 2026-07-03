@@ -153,7 +153,7 @@ final class RelayEngine: ObservableObject {
             var chirpSeconds = 0.0
             if station.chirpEnabled {
                 chirpSeconds = Chirp.expectedDuration(bytes.count)
-                chirp.play(bytes) { [weak self] ok in
+                chirp.play(bytes, timbres: Self.timbreCodes(for: bytes)) { [weak self] ok in
                     Task { @MainActor in
                         self?.appendLog(
                             ok ? "Chirp playing." : "Chirp couldn't start (audio engine unavailable) — on air silently.",
@@ -170,9 +170,22 @@ final class RelayEngine: ObservableObject {
 
             phase = .confirming
             appendLog("Signing confirmation…", .info)
+            // The first signal often beats the first GPS fix (the cause of
+            // early "location not shared" confirmations while the dashboard
+            // showed coordinates moments later). Give the fix a bounded
+            // moment to land before signing — never more than 5s.
+            var locWait = 0.0
+            while station.locationMode == .automatic,
+                  station.effectiveCoordinate(from: locationProvider) == nil,
+                  locWait < 5.0 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                locWait += 0.5
+            }
             let coord = station.effectiveCoordinate(from: locationProvider)
-            let latStr = coord.map { String(format: "%.5f", $0.lat) } ?? ""
-            let lonStr = coord.map { String(format: "%.5f", $0.lon) } ?? ""
+            // Coarse by design (~5 mi): one decimal place, matching
+            // Station.effectiveCoordinate's rounding.
+            let latStr = coord.map { String(format: "%.1f", $0.lat) } ?? ""
+            let lonStr = coord.map { String(format: "%.1f", $0.lon) } ?? ""
             let payload = Signer.confirmationPayload(
                 id: t.id, payloadHash: t.payload_hash, at: Date(), lat: latStr, lon: lonStr
             )
@@ -240,6 +253,27 @@ final class RelayEngine: ObservableObject {
     private func persistLifetime() {
         UserDefaults.standard.set(lifetimeRelayed, forKey: Self.lifetimeRelayedKey)
         UserDefaults.standard.set(lifetimeBytes, forKey: Self.lifetimeBytesKey)
+    }
+
+    /// Per-byte timbre codes for the sonification — same field→instrument
+    /// mapping as the website (sonify.ts segTimbre): body=sawtooth,
+    /// thumb=square, checksum=sine, framing=triangle.
+    nonisolated static func timbreCodes(for bytes: [UInt8]) -> [Int] {
+        var codes = [Int](repeating: Chirp.Timbre.triangle.rawValue, count: bytes.count)
+        guard let segments = parsePacketSegments(bytes) else { return codes }
+        for seg in segments {
+            let code: Chirp.Timbre
+            switch seg.field {
+            case .body: code = .sawtooth
+            case .thumb: code = .square
+            case .checksum: code = .sine
+            default: code = .triangle
+            }
+            if code != .triangle {
+                for i in seg.range { codes[i] = code.rawValue }
+            }
+        }
+        return codes
     }
 
     private func appendLog(_ text: String, _ kind: LogEntry.Kind) {

@@ -115,7 +115,7 @@ struct DashboardView: View {
 
     private var locationSummary: String {
         if let c = station.effectiveCoordinate(from: engine.locationProvider) {
-            return String(format: "%.2f, %.2f", c.lat, c.lon)
+            return String(format: "≈ %.1f, %.1f", c.lat, c.lon)
         }
         return station.locationMode == .automatic ? engine.locationProvider.status : "Not set"
     }
@@ -346,7 +346,7 @@ struct ConfirmationCard: View {
 
             HStack(spacing: 14) {
                 if let lat = confirmation.lat, let lon = confirmation.lon {
-                    detail("BROADCAST FROM", String(format: "%.5f, %.5f", lat, lon))
+                    detail("BROADCAST FROM · ~5 MI", String(format: "≈ %.1f, %.1f", lat, lon))
                 } else {
                     detail("BROADCAST FROM", "location not shared")
                 }

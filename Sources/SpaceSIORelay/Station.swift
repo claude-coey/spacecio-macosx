@@ -42,15 +42,31 @@ final class Station: ObservableObject {
         return RadioAPI(baseURL: url, apiKey: key)
     }
 
-    /// The coordinates that go into the signed confirmation.
+    /// The coordinates that go into the signed confirmation — ALWAYS coarse.
+    /// Rounded to 0.1° (≈ 5-mile radius) so the station attests roughly where
+    /// the broadcast happened without pinpointing anyone's home. This is the
+    /// single choke point: the UI display and the signed payload both come
+    /// through here, so a precise fix can never leak downstream.
     func effectiveCoordinate(from provider: LocationProvider) -> (lat: Double, lon: Double)? {
+        let raw: (Double, Double)?
         switch locationMode {
         case .automatic:
-            if let c = provider.coordinate { return (c.latitude, c.longitude) }
-            return manualCoordinate // graceful fallback
+            if let c = provider.coordinate {
+                raw = (c.latitude, c.longitude)
+            } else {
+                raw = manualCoordinate // graceful fallback
+            }
         case .manual:
-            return manualCoordinate
+            raw = manualCoordinate
         }
+        guard let r = raw else { return nil }
+        return (coarse(r.0), coarse(r.1))
+    }
+
+    /// Round to 1 decimal place ≈ an 11 km latitude cell — anywhere inside is
+    /// within roughly 5 miles of the stored point.
+    private func coarse(_ v: Double) -> Double {
+        (v * 10).rounded() / 10
     }
 
     private var manualCoordinate: (lat: Double, lon: Double)? {

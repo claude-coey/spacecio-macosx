@@ -10,14 +10,40 @@ import AVFoundation
 /// if audio hangs, the audio thread hangs alone and the station keeps
 /// relaying — silently, with an honest log line.
 final class Chirp {
-    static let toneDuration = 0.03
-    /// At 0.03 s per byte a ~2 KB photo packet would chirp for over a minute
-    /// (and allocate a huge buffer) — chirp at most this many bytes (~4.8 s).
+    /// Chirp at most this many bytes — the audible signature, not the packet.
     static let maxChirpBytes = 160
+
+    // ── Sonification model: EXACT port of the website's src/lib/sonify.ts ──
+    // Minor-pentatonic scale over 4 octaves from A2; pitch is a pure function
+    // of the byte value; timbre reflects the packet field. Same packet →
+    // same sound, on the site and on the station.
+    private static let scaleSteps = [0, 3, 5, 7, 10]
+    private static let octaves = 4
+    private static let baseMidi = 45.0 // A2
+
+    /// sonify.ts `byteToFreq` — byte (0…255) → Hz on the pentatonic grid.
+    static func byteToFreq(_ v: UInt8) -> Double {
+        let notes = scaleSteps.count * octaves
+        let idx = min(notes - 1, Int(Double(v) / 256.0 * Double(notes)))
+        let octave = idx / scaleSteps.count
+        let midi = baseMidi + Double(octave * 12 + scaleSteps[idx % scaleSteps.count])
+        return 440.0 * pow(2.0, (midi - 69.0) / 12.0)
+    }
+
+    /// sonify.ts `noteDurFor` — aim for ~6s total, clamped per note.
+    static func noteDur(forCount n: Int) -> Double {
+        guard n > 0 else { return 0.06 }
+        return max(0.02, min(0.09, 6.0 / Double(n)))
+    }
+
+    /// Timbre codes (sonify.ts `segTimbre`): 0 triangle (framing default),
+    /// 1 sawtooth (message body), 2 square (thumbnail), 3 sine (checksum).
+    enum Timbre: Int { case triangle = 0, sawtooth = 1, square = 2, sine = 3 }
 
     /// Pure math — safe to call from anywhere, never touches AVFoundation.
     static func expectedDuration(_ byteCount: Int) -> Double {
-        Double(max(0, min(byteCount, maxChirpBytes))) * toneDuration
+        let n = max(0, min(byteCount, maxChirpBytes))
+        return Double(n) * noteDur(forCount: n)
     }
 
     private let audioQueue = DispatchQueue(label: "com.spacesio.relay.chirp", qos: .userInitiated)
@@ -67,11 +93,17 @@ final class Chirp {
         }
     }
 
-    /// Schedules the chirp asynchronously. `report(started)` is invoked from
-    /// the audio queue once (or never, if the HAL is truly wedged — which is
-    /// exactly why the station loop must not wait on it).
-    func play(_ allBytes: [UInt8], report: @escaping @Sendable (Bool) -> Void) {
+    /// Schedules the chirp asynchronously. `timbres` carries one Timbre raw
+    /// value per byte (defaults to triangle when omitted/short). `report` is
+    /// invoked from the audio queue once (or never, if the HAL is truly
+    /// wedged — which is exactly why the station loop must not wait on it).
+    func play(
+        _ allBytes: [UInt8],
+        timbres allTimbres: [Int] = [],
+        report: @escaping @Sendable (Bool) -> Void
+    ) {
         let bytes = Array(allBytes.prefix(Self.maxChirpBytes))
+        let timbres = Array(allTimbres.prefix(Self.maxChirpBytes))
         audioQueue.async { [weak self] in
             var ok = false
             defer { report(ok) }
@@ -87,22 +119,39 @@ final class Chirp {
                 guard (try? engine.start()) != nil, engine.isRunning else { return }
             }
 
-            let framesPerTone = Int(sampleRate * Self.toneDuration)
-            let totalFrames = AVAudioFrameCount(framesPerTone * bytes.count)
+            let noteDur = Self.noteDur(forCount: bytes.count)
+            let framesPerNote = max(1, Int(sampleRate * noteDur))
+            let totalFrames = AVAudioFrameCount(framesPerNote * bytes.count)
             guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames),
                   let channel = buffer.floatChannelData?[0]
             else { return }
             buffer.frameLength = totalFrames
 
+            // Same envelope as the website: linear attack over the first 25%
+            // of the note, exponential decay to near-zero by 98%.
+            let attackEnd = 0.25
+            let peak = 0.3
             var idx = 0
-            let attack = Int(sampleRate * 0.004)
-            for byte in bytes {
-                let freq = 440.0 + Double(byte) * 6.5
-                for i in 0..<framesPerTone {
-                    let t = Double(i) / sampleRate
-                    let edge = min(i, framesPerTone - 1 - i)
-                    let env = min(1.0, Double(edge) / Double(max(1, attack)))
-                    channel[idx] = Float(sin(2.0 * .pi * freq * t) * 0.28 * env)
+            for (n, byte) in bytes.enumerated() {
+                let freq = Self.byteToFreq(byte)
+                let timbre = Timbre(rawValue: n < timbres.count ? timbres[n] : 0) ?? .triangle
+                var phase = 0.0
+                let step = freq / sampleRate
+                for i in 0..<framesPerNote {
+                    let x = Double(i) / Double(framesPerNote) // 0…1 through the note
+                    let env: Double = x < attackEnd
+                        ? x / attackEnd
+                        : pow(0.001, (x - attackEnd) / (0.98 - attackEnd))
+                    let frac = phase - phase.rounded(.down)
+                    let sample: Double
+                    switch timbre {
+                    case .sine: sample = sin(2.0 * .pi * frac)
+                    case .square: sample = frac < 0.5 ? 0.7 : -0.7 // softened square
+                    case .sawtooth: sample = (2.0 * frac - 1.0) * 0.8
+                    case .triangle: sample = 2.0 * abs(2.0 * frac - 1.0) - 1.0
+                    }
+                    channel[idx] = Float(sample * peak * env)
+                    phase += step
                     idx += 1
                 }
             }
