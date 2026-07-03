@@ -63,6 +63,7 @@ final class RelayEngine: ObservableObject {
             sessionStartedAt = Date()
             pollCount = 0
             sessionBytes = 0
+            chirp.prewarm() // start the audio engine off the critical path
             appendLog("Station online — listening for queued signals.", .info)
             loopTask = Task { [weak self] in await self?.runLoop() }
         } else {
@@ -120,7 +121,9 @@ final class RelayEngine: ObservableObject {
             let sent = await Self.withDeadline(seconds: 15) {
                 Broadcaster.broadcast(packetData)
             } ?? false
-            if !sent {
+            if sent {
+                appendLog("Proof packet on air — \(bytes.count) bytes over UDP.", .info)
+            } else {
                 appendLog(
                     "UDP broadcast didn't complete (check Local Network permission in System Settings → Privacy) — continuing to confirmation.",
                     .error
@@ -130,6 +133,9 @@ final class RelayEngine: ObservableObject {
             var chirpSeconds = 0.0
             if station.chirpEnabled {
                 chirpSeconds = chirp.play(bytes)
+                if chirpSeconds == 0 {
+                    appendLog("Chirp unavailable (audio engine not running) — broadcasting silently.", .info)
+                }
             }
             chirpDuration = chirpSeconds
             // Hold the on-air moment for at least the chirp's duration, but
@@ -217,8 +223,9 @@ final class RelayEngine: ObservableObject {
 
     /// Runs blocking work off the main actor with a deadline. Returns nil if
     /// the deadline passes first (the orphaned work finishes in the background;
-    /// the station loop moves on instead of wedging).
-    private static func withDeadline<T: Sendable>(
+    /// the station loop moves on instead of wedging). Explicitly nonisolated so
+    /// neither child task can inherit MainActor isolation.
+    private nonisolated static func withDeadline<T: Sendable>(
         seconds: Double,
         _ work: @escaping @Sendable () -> T
     ) async -> T? {

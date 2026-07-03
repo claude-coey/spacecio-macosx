@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="SpaceSIO Relay"
 BUNDLE_ID="com.spacesio.relay"
-VERSION="1.1"
+VERSION="1.2"
 BIN="SpaceSIORelay"
 DIST="dist"
 
@@ -36,6 +36,16 @@ rm -rf "$DIST"
 APP="$DIST/$APP_NAME.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_PATH" "$APP/Contents/MacOS/$BIN"
+
+# SPM resource bundle (brand logo etc.) — Bundle.module finds it in
+# Contents/Resources at runtime.
+RES_BUNDLE="$(dirname "$BIN_PATH")/${BIN}_${BIN}.bundle"
+if [ -d "$RES_BUNDLE" ]; then
+  cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
+  echo "  bundled resources: $(basename "$RES_BUNDLE")"
+else
+  echo "  WARNING: resource bundle not found at $RES_BUNDLE"
+fi
 
 echo "▸ Writing bundle Info.plist…"
 cat > "$APP/Contents/Info.plist" <<PLIST

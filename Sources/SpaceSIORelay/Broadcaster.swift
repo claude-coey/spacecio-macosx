@@ -17,6 +17,14 @@ enum Broadcaster {
         var yes: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &yes, socklen_t(MemoryLayout<Int32>.size))
 
+        // HARD send timeout at the socket level. On recent macOS, sendto to
+        // the broadcast address can block indefinitely while the Local
+        // Network permission is undecided/denied — this guarantees each send
+        // returns within 2s no matter what, so the station loop can never
+        // wedge here.
+        var tv = timeval(tv_sec: 2, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = port.bigEndian

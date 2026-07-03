@@ -11,6 +11,7 @@ let package = Package(
         .executableTarget(
             name: "SpaceSIORelay",
             path: "Sources/SpaceSIORelay",
+            resources: [.process("Resources")],
             linkerSettings: [
                 // Embed Info.plist (location-permission strings, bundle id)
                 // directly in the executable so `swift run` works without an

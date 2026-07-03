@@ -19,6 +19,9 @@ struct ContentView: View {
                 .environmentObject(station)
                 .environmentObject(engine)
         }
+        // Keep the layout composed: below this the two-column dashboard has
+        // no room to breathe and padding visibly collapses.
+        .frame(minWidth: 940, minHeight: 700)
     }
 }
 

@@ -23,10 +23,14 @@ struct DashboardView: View {
                 .frame(maxWidth: .infinity)
 
                 logPanel
-                    .frame(width: 300)
+                    .frame(width: 310)
             }
         }
         .padding(24)
+        // Consistent composition at any window size: content column caps out
+        // and centers instead of stretching edge-to-edge on wide windows.
+        .frame(maxWidth: 1180)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var header: some View {
@@ -42,16 +46,22 @@ struct DashboardView: View {
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.4))
             }
-            Button {
-                showSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .padding(8)
-                    .background(Color.white.opacity(0.07), in: Circle())
+            // Chrome controls are AppKit-backed (SwiftUI Button dispatch
+            // segfaults on macOS 26 for these — see AppKitIconButton).
+            AppKitIconButton(
+                systemName: station.chirpEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                label: station.chirpEnabled ? "Mute chirp" : "Unmute chirp"
+            ) {
+                station.chirpEnabled.toggle()
             }
-            .buttonStyle(.plain)
+            .frame(width: 32, height: 32)
+            .background(Color.white.opacity(0.07), in: Circle())
+
+            AppKitIconButton(systemName: "gearshape.fill", label: "Settings") {
+                showSettings = true
+            }
+            .frame(width: 32, height: 32)
+            .background(Color.white.opacity(0.07), in: Circle())
         }
     }
 
@@ -149,7 +159,7 @@ struct DashboardView: View {
                     bytes: engine.onAirBytes,
                     animate: engine.phase == .broadcasting,
                     progress: playheadProgress(at: timeline.date),
-                    maxBars: 60
+                    time: timeline.date.timeIntervalSinceReferenceDate
                 )
             }
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum Theme {
@@ -33,19 +34,75 @@ extension View {
 
 struct Wordmark: View {
     var size: CGFloat = 22
+
+    /// True when the brand PNG shipped in the SPM resource bundle is present
+    /// (it is for both `swift run` and the .app built by make-installer).
+    private var hasBrandAsset: Bool {
+        Bundle.module.url(forResource: "spacesio-logo", withExtension: "png") != nil
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            Text("Space")
-                .font(.system(size: size, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-            Text("SIO")
-                .font(.system(size: size, weight: .heavy, design: .rounded))
-                .foregroundStyle(Theme.accent)
-            Text("  RELAY")
-                .font(.system(size: size * 0.72, weight: .light, design: .rounded))
+        HStack(alignment: .center, spacing: 10) {
+            if hasBrandAsset {
+                Image("spacesio-logo", bundle: .module)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(height: size * 1.35)
+                    .accessibilityLabel("SpaceSIO")
+            } else {
+                // Fallback text lockup if the resource bundle is missing.
+                HStack(spacing: 0) {
+                    Text("Space")
+                        .font(.system(size: size, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                    Text("SIO")
+                        .font(.system(size: size, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            Text("RELAY")
+                .font(.system(size: size * 0.66, weight: .light, design: .rounded))
                 .kerning(3)
                 .foregroundStyle(.white.opacity(0.65))
         }
+    }
+}
+
+/// AppKit-backed icon button. SwiftUI's Button gesture dispatch crashes on
+/// macOS 26 for some controls (MainActor.assumeIsolated segfault in
+/// _ButtonGesture), so chrome controls route through a plain NSButton
+/// target/action — no SwiftUI gesture machinery involved.
+struct AppKitIconButton: NSViewRepresentable {
+    let systemName: String
+    let label: String
+    let action: () -> Void
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func fire() { action() }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    func makeNSView(context: Context) -> NSButton {
+        let b = NSButton()
+        b.isBordered = false
+        b.bezelStyle = .regularSquare
+        b.setButtonType(.momentaryChange)
+        b.imageScaling = .scaleProportionallyDown
+        b.image = NSImage(systemSymbolName: systemName, accessibilityDescription: label)
+        b.contentTintColor = NSColor.white.withAlphaComponent(0.75)
+        b.target = context.coordinator
+        b.action = #selector(Coordinator.fire)
+        b.setAccessibilityLabel(label)
+        return b
+    }
+
+    func updateNSView(_ b: NSButton, context: Context) {
+        context.coordinator.action = action
+        b.image = NSImage(systemSymbolName: systemName, accessibilityDescription: label)
     }
 }
 
@@ -87,50 +144,54 @@ struct StarfieldView: View {
 
 /// Multi-hue capsule bars derived from the packet bytes — the app-side cousin
 /// of the web waveform.
+/// Multi-hue byte waveform, drawn with Canvas so it FILLS the available width
+/// and scales with the window. `time` (from an enclosing TimelineView) drives
+/// a gentle travelling pulse while broadcasting; `progress` draws the
+/// sonification playhead.
 struct WaveformView: View {
     let bytes: [UInt8]
     var animate: Bool = false
-    /// 0…1 — draws a sweeping playhead over the bars (the sonification cursor).
+    /// 0…1 — sweeping playhead position (the sonification cursor).
     var progress: Double? = nil
-    var maxBars: Int = 44
-    @State private var pulsing = false
+    /// Timebase for the broadcast pulse; pass timeline.date.timeIntervalSinceReferenceDate.
+    var time: Double = 0
+    var maxBars: Int = 96
+    var height: CGFloat = 56
+
+    private static let palette: [Color] = [
+        Theme.signal, Theme.beacon, Color(red: 0.9, green: 0.42, blue: 0.95),
+    ]
 
     var body: some View {
-        HStack(alignment: .center, spacing: 3) {
-            ForEach(Array(bytes.prefix(maxBars).enumerated()), id: \.offset) { i, b in
-                Capsule()
-                    .fill(color(i))
-                    .frame(width: 4, height: 8 + CGFloat(b) / 255 * 42)
-                    .scaleEffect(y: animate && pulsing ? 0.45 : 1.0, anchor: .center)
-                    .animation(
-                        animate
-                            ? .easeInOut(duration: 0.5)
-                                .repeatForever(autoreverses: true)
-                                .delay(Double(i) * 0.03)
-                            : .default,
-                        value: pulsing
-                    )
-            }
-        }
-        .frame(height: 54)
-        .overlay(alignment: .topLeading) {
-            if let p = progress {
-                GeometryReader { geo in
-                    Capsule()
-                        .fill(Color.white.opacity(0.9))
-                        .frame(width: 2, height: geo.size.height)
-                        .shadow(color: Theme.signal.opacity(0.9), radius: 5)
-                        .offset(x: max(0, min(1, p)) * max(0, geo.size.width - 2))
-                }
-            }
-        }
-        .onAppear { pulsing = animate }
-        .onChange(of: animate) { pulsing = $0 }
-    }
+        Canvas { ctx, size in
+            let shown = Array(bytes.prefix(maxBars))
+            guard !shown.isEmpty, size.width > 4 else { return }
+            let n = shown.count
+            let gap: CGFloat = 3
+            let barW = max(2, (size.width - gap * CGFloat(n - 1)) / CGFloat(n))
+            let midY = size.height / 2
 
-    private func color(_ i: Int) -> Color {
-        let palette: [Color] = [Theme.signal, Theme.beacon, Color(red: 0.9, green: 0.42, blue: 0.95)]
-        return palette[i % palette.count].opacity(0.9)
+            for (i, b) in shown.enumerated() {
+                let base = 0.16 + (CGFloat(b) / 255) * 0.84 // 16%…100% of height
+                let wobble: CGFloat = animate
+                    ? 0.62 + 0.38 * CGFloat(sin(time * 5.0 + Double(i) * 0.45))
+                    : 1.0
+                let h = max(4, size.height * base * wobble)
+                let x = CGFloat(i) * (barW + gap)
+                let rect = CGRect(x: x, y: midY - h / 2, width: barW, height: h)
+                let color = Self.palette[i % Self.palette.count].opacity(0.9)
+                ctx.fill(Path(roundedRect: rect, cornerRadius: barW / 2), with: .color(color))
+            }
+
+            if let p = progress {
+                let px = max(0, min(1, p)) * (size.width - 2)
+                let cursor = CGRect(x: px, y: 0, width: 2, height: size.height)
+                ctx.fill(Path(roundedRect: cursor, cornerRadius: 1), with: .color(.white.opacity(0.9)))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .accessibilityLabel("Packet byte waveform")
     }
 }
 

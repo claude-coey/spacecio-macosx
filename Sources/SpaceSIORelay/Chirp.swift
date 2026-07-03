@@ -5,18 +5,33 @@ import AVFoundation
 final class Chirp {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
-    private var ready = false
+    private let stateQueue = DispatchQueue(label: "chirp.state")
+    private var _ready = false
+    private var prewarmStarted = false
 
-    private func prepare() {
-        guard !ready else { return }
+    private(set) var ready: Bool {
+        get { stateQueue.sync { _ready } }
+        set { stateQueue.sync { _ready = newValue } }
+    }
+
+    /// Starts the audio engine on a background queue. AVAudioEngine.start()
+    /// can stall on a misbehaving audio device — it must NEVER run inline in
+    /// the broadcast cycle (it would wedge the station). If it fails, the
+    /// station simply broadcasts silently.
+    func prewarm() {
+        guard stateQueue.sync(execute: { !prewarmStarted }) else { return }
+        stateQueue.sync { prewarmStarted = true }
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: nil)
         engine.mainMixerNode.outputVolume = 0.6
-        do {
-            try engine.start()
-            ready = true
-        } catch {
-            ready = false
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            do {
+                try self.engine.start()
+                self.ready = true
+            } catch {
+                self.ready = false
+            }
         }
     }
 
@@ -31,7 +46,7 @@ final class Chirp {
     @discardableResult
     func play(_ allBytes: [UInt8]) -> Double {
         let bytes = Array(allBytes.prefix(Self.maxChirpBytes))
-        prepare()
+        prewarm() // no-op after the first call; never blocks
         let sampleRate = 44_100.0
         let toneDuration = 0.03
         guard ready, !bytes.isEmpty,
