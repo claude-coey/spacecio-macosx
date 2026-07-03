@@ -9,7 +9,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>SpaceSIO Relay</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.4</string>
+	<string>1.5</string>
 	<key>NSLocationUsageDescription</key>
 	<string>Your station location is included in the signed confirmation sent back after each broadcast, so the network can map where signals went on air. You can use manual coordinates instead in Settings.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

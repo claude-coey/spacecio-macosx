@@ -25,6 +25,14 @@ final class Chirp {
     // init talks to the HAL and must stay off the main thread).
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
+    /// The ONE format used for both the player connection and every buffer.
+    /// Connecting with `format: nil` adopts the output device's format (often
+    /// 48 kHz stereo) while our buffers are 44.1 kHz mono — that mismatch made
+    /// AVAudioPlayerNode.scheduleBuffer throw an NSException (v1.4 crash) and
+    /// is the likely reason the chirp was never audible. Using the same
+    /// format object for both makes the engine insert converters for the
+    /// device leg, guaranteed match on ours.
+    private var format: AVAudioFormat?
     private var ready = false
     private var startAttempted = false
 
@@ -39,15 +47,20 @@ final class Chirp {
     private func startEngineIfNeeded() {
         guard !startAttempted else { return }
         startAttempted = true
+        guard let fmt = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1) else {
+            self.ready = false
+            return
+        }
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
         engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: nil)
+        engine.connect(player, to: engine.mainMixerNode, format: fmt)
         engine.mainMixerNode.outputVolume = 0.8
         do {
             try engine.start()
             self.engine = engine
             self.player = player
+            self.format = fmt
             self.ready = true
         } catch {
             self.ready = false
@@ -65,9 +78,14 @@ final class Chirp {
             guard let self else { return }
             self.startEngineIfNeeded()
             let sampleRate = 44_100.0
-            guard self.ready, let player = self.player, !bytes.isEmpty,
-                  let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)
+            guard self.ready, let engine = self.engine, let player = self.player,
+                  let format = self.format, !bytes.isEmpty
             else { return }
+            // scheduleBuffer/play throw NSExceptions (uncatchable from Swift)
+            // if the engine isn't actually running — never call them blind.
+            if !engine.isRunning {
+                guard (try? engine.start()) != nil, engine.isRunning else { return }
+            }
 
             let framesPerTone = Int(sampleRate * Self.toneDuration)
             let totalFrames = AVAudioFrameCount(framesPerTone * bytes.count)
