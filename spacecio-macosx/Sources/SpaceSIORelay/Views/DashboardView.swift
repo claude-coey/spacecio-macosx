@@ -1,0 +1,319 @@
+import AppKit
+import SwiftUI
+
+struct DashboardView: View {
+    @EnvironmentObject var station: Station
+    @EnvironmentObject var engine: RelayEngine
+    @Binding var showSettings: Bool
+
+    var body: some View {
+        VStack(spacing: 18) {
+            header
+            HStack(alignment: .top, spacing: 18) {
+                VStack(spacing: 18) {
+                    onAirCard
+                    if let t = engine.current {
+                        transmissionCard(t)
+                    }
+                    if let c = engine.lastConfirmation {
+                        ConfirmationCard(confirmation: c)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity)
+
+                logPanel
+                    .frame(width: 300)
+            }
+        }
+        .padding(24)
+    }
+
+    private var header: some View {
+        HStack(spacing: 14) {
+            Wordmark()
+            Spacer()
+            StatusPill(phase: engine.phase)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(station.rigName)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.85))
+                Text("ID \(String(engine.stationPublicKey.prefix(12)))…")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(8)
+                    .background(Color.white.opacity(0.07), in: Circle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var onAirCard: some View {
+        VStack(spacing: 16) {
+            OnAirButton(isOn: engine.onAir, phase: engine.phase) {
+                engine.setOnAir(!engine.onAir)
+            }
+            HStack(spacing: 20) {
+                stat("CONFIRMED", "\(engine.confirmedCount)")
+                stat("CHIRP", station.chirpEnabled ? "ON" : "MUTED")
+                stat("LOCATION", locationSummary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(24)
+        .glassCard()
+    }
+
+    private var locationSummary: String {
+        if let c = station.effectiveCoordinate(from: engine.locationProvider) {
+            return String(format: "%.2f, %.2f", c.lat, c.lon)
+        }
+        return station.locationMode == .automatic ? engine.locationProvider.status : "Not set"
+    }
+
+    private func stat(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 9, weight: .bold))
+                .kerning(1.2)
+                .foregroundStyle(.white.opacity(0.4))
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func transmissionCard(_ t: Transmission) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("NOW BROADCASTING")
+                    .font(.system(size: 10, weight: .bold))
+                    .kerning(1.5)
+                    .foregroundStyle(Theme.ember)
+                Spacer()
+                if let callsign = t.callsign {
+                    Text("@\(callsign)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Theme.signal)
+                }
+            }
+            Text(t.title ?? "Untitled signal")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+            WaveformView(
+                bytes: [UInt8](t.packet.flatMap { Data(base64Encoded: $0) } ?? Data()),
+                animate: engine.phase == .broadcasting
+            )
+            HStack(spacing: 14) {
+                if let pb = t.packet_bytes {
+                    metaChip("\(pb) B packet")
+                }
+                if let type = t.type {
+                    metaChip(type.uppercased())
+                }
+                metaChip("UDP :\(Broadcaster.port)")
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
+    private func metaChip(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.55))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.white.opacity(0.06), in: Capsule())
+    }
+
+    private var logPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("STATION LOG")
+                .font(.system(size: 10, weight: .bold))
+                .kerning(1.5)
+                .foregroundStyle(.white.opacity(0.4))
+            if engine.log.isEmpty {
+                Text("Quiet for now. Flip the station on air to start relaying.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(engine.log) { entry in
+                        HStack(alignment: .top, spacing: 8) {
+                            Circle()
+                                .fill(color(for: entry.kind))
+                                .frame(width: 6, height: 6)
+                                .padding(.top, 4)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.text)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.white.opacity(0.8))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(entry.date, style: .time)
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.35))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .glassCard()
+    }
+
+    private func color(for kind: LogEntry.Kind) -> Color {
+        switch kind {
+        case .info: return Theme.signal
+        case .success: return Theme.go
+        case .error: return Theme.ember
+        }
+    }
+}
+
+/// The big pulsing on-air control.
+struct OnAirButton: View {
+    let isOn: Bool
+    let phase: RelayEngine.Phase
+    let action: () -> Void
+    @State private var pulse = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .strokeBorder(ringColor.opacity(pulse ? 0.05 : 0.4), lineWidth: 2)
+                    .frame(width: 168, height: 168)
+                    .scaleEffect(pulse ? 1.12 : 0.98)
+                    .animation(
+                        isOn ? .easeInOut(duration: 1.6).repeatForever(autoreverses: true) : .default,
+                        value: pulse
+                    )
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [ringColor.opacity(0.35), Color.black.opacity(0.5)],
+                            center: .center, startRadius: 6, endRadius: 84
+                        )
+                    )
+                    .frame(width: 148, height: 148)
+                    .overlay(Circle().strokeBorder(ringColor.opacity(0.6), lineWidth: 1.5))
+                    .shadow(color: ringColor.opacity(isOn ? 0.5 : 0.15), radius: 26)
+                VStack(spacing: 6) {
+                    Image(systemName: isOn ? "antenna.radiowaves.left.and.right" : "power")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text(isOn ? "ON AIR" : "GO ON AIR")
+                        .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                        .kerning(2)
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .onAppear { pulse = isOn }
+        .onChange(of: isOn) { pulse = $0 }
+    }
+
+    private var ringColor: Color {
+        guard isOn else { return .gray }
+        switch phase {
+        case .broadcasting: return Theme.ember
+        case .confirming: return Theme.beacon
+        case .confirmed: return Theme.go
+        default: return Theme.signal
+        }
+    }
+}
+
+struct ConfirmationCard: View {
+    let confirmation: Confirmation
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.seal.fill")
+                    .foregroundStyle(Theme.go)
+                Text("SIGNED CONFIRMATION DELIVERED")
+                    .font(.system(size: 10, weight: .bold))
+                    .kerning(1.4)
+                    .foregroundStyle(Theme.go)
+                Spacer()
+                Text(confirmation.date, style: .time)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+
+            Text(confirmation.title)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .lineLimit(2)
+
+            HStack(spacing: 14) {
+                if let lat = confirmation.lat, let lon = confirmation.lon {
+                    detail("BROADCAST FROM", String(format: "%.5f, %.5f", lat, lon))
+                } else {
+                    detail("BROADCAST FROM", "location not shared")
+                }
+                detail("ED25519 SIG", "\(confirmation.signaturePrefix)…")
+            }
+
+            HStack(spacing: 10) {
+                if let link = confirmation.permalink, let url = URL(string: link) {
+                    Link(destination: url) {
+                        Label("View signal", systemImage: "arrow.up.right.square")
+                    }
+                }
+                if let cert = confirmation.certificateURL, let url = URL(string: cert) {
+                    Link(destination: url) {
+                        Label("Certificate", systemImage: "doc.badge.ellipsis")
+                    }
+                }
+                Spacer()
+                Button {
+                    if let link = confirmation.permalink {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(link, forType: .string)
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+                    }
+                } label: {
+                    Label(copied ? "Copied" : "Copy link", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.signal)
+            }
+            .font(.system(size: 12))
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
+    private func detail(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 9, weight: .bold))
+                .kerning(1.2)
+                .foregroundStyle(.white.opacity(0.4))
+            Text(value)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.85))
+        }
+    }
+}

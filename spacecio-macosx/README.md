@@ -28,27 +28,6 @@ swift run
 
 Or open the `macos-relay` folder in Xcode and press Run.
 
-## Build the installer (DMG)
-
-```sh
-./scripts/make-installer.sh
-```
-
-Produces `dist/SpaceSIO-Relay-1.0.dmg` — a standard drag-to-Applications disk
-image containing `SpaceSIO Relay.app` (with icon, bundle Info.plist, ad-hoc
-signature). Running as a proper .app also makes the CoreLocation permission
-prompt reliable.
-
-Unsigned distribution caveat: downloaders must right-click → Open the first
-time (Gatekeeper). For a warning-free install, join the Apple Developer
-Program, then sign and notarize:
-
-```sh
-DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" ./scripts/make-installer.sh
-xcrun notarytool submit dist/*.dmg --keychain-profile <profile> --wait
-xcrun stapler staple dist/*.dmg
-```
-
 ## Setup
 
 - **API key** — create one in the operator console at **Admin → Radio API**

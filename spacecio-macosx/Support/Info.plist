@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.spacesio.relay</string>
+	<key>CFBundleName</key>
+	<string>SpaceSIO Relay</string>
+	<key>CFBundleDisplayName</key>
+	<string>SpaceSIO Relay</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Your station location is included in the signed confirmation sent back after each broadcast, so the network can map where signals went on air. You can use manual coordinates instead in Settings.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Your station location is included in the signed confirmation sent back after each broadcast, so the network can map where signals went on air. You can use manual coordinates instead in Settings.</string>
+</dict>
+</plist>
