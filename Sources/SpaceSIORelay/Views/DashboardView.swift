@@ -53,6 +53,7 @@ struct DashboardView: View {
                 label: station.chirpEnabled ? "Mute chirp" : "Unmute chirp"
             ) {
                 station.chirpEnabled.toggle()
+                if station.chirpEnabled { engine.testChirp() }
             }
             .frame(width: 32, height: 32)
             .background(Color.white.opacity(0.07), in: Circle())
@@ -175,7 +176,7 @@ struct DashboardView: View {
                 if let type = t.type {
                     metaChip(type.uppercased())
                 }
-                metaChip("UDP :\(Broadcaster.port)")
+                metaChip("WIFI RADIO")
             }
 
             Text("You're hearing the actual packet bytes — one note per byte, one-time playback. The packet is destroyed the moment this broadcast ends; the station retains nothing.")

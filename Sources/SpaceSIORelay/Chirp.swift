@@ -41,8 +41,8 @@ final class Chirp {
 
     /// Plays the chirp; returns its duration in seconds (0 if audio failed).
     /// Long packets are truncated to `maxChirpBytes` — the chirp is an audible
-    /// signature of the packet, not the transmission itself (the full bytes go
-    /// out over UDP regardless).
+    /// signature of the packet, not the transmission itself (the full packet
+    /// already travelled to this station over the WiFi radio).
     @discardableResult
     func play(_ allBytes: [UInt8]) -> Double {
         let bytes = Array(allBytes.prefix(Self.maxChirpBytes))

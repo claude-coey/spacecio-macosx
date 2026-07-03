@@ -78,9 +78,35 @@ final class RelayEngine: ObservableObject {
 
     private func runLoop() async {
         while !Task.isCancelled && onAir {
-            await cycle()
+            // Watchdog: no single broadcast cycle may hold the station longer
+            // than 90s. Cancellation unwedges every await point (sleep, HTTP);
+            // the cycle's own error handling logs it and destroys the packet.
+            let cycleTask = Task { [weak self] in await self?.cycle() }
+            let watchdog = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 90_000_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.appendLog("Watchdog: cycle exceeded 90s — abandoning this broadcast.", .error)
+                }
+                cycleTask.cancel()
+            }
+            _ = await cycleTask.value
+            watchdog.cancel()
             try? await Task.sleep(nanoseconds: 6_000_000_000)
         }
+    }
+
+    /// Short audible test (three notes) so a member can verify the audio path
+    /// without waiting for a real signal. Fired from the mute toggle.
+    func testChirp() {
+        chirp.prewarm()
+        let seconds = chirp.play([40, 120, 220])
+        appendLog(
+            seconds > 0
+                ? "Test chirp played."
+                : "Test chirp failed — audio engine not running (check output device / volume).",
+            seconds > 0 ? .info : .error
+        )
     }
 
     private func cycle() async {
@@ -101,10 +127,12 @@ final class RelayEngine: ObservableObject {
 
             current = t
             lastConfirmation = nil
-            appendLog("Received \"\(t.title ?? t.slug ?? "signal")\" — going on air.", .info)
             phase = .broadcasting
 
-            // The proof packet is what physically goes out over the WiFi radio.
+            // THE PULL IS THE TRANSMISSION: the packet just travelled to this
+            // station over the WiFi radio — that download IS the RF event.
+            // (No UDP re-broadcast, so no Local Network permission is needed
+            // and no raw-socket call can ever wedge the station.)
             let packetData = t.packet.flatMap { Data(base64Encoded: $0) }
                 ?? Data((t.title ?? t.id).utf8)
             let bytes = [UInt8](packetData)
@@ -112,29 +140,18 @@ final class RelayEngine: ObservableObject {
             // for the on-air moment; destroyPacket() wipes it on every exit.
             onAirBytes = bytes
             broadcastStartedAt = Date()
-
-            // Bounded: the UDP send can block indefinitely on macOS if the
-            // Local Network permission is pending/denied — never let it wedge
-            // the whole station loop (the claimed signal would stay "on air"
-            // forever and polling would stop). If the send doesn't finish in
-            // time we still proceed to the signed confirmation.
-            let sent = await Self.withDeadline(seconds: 15) {
-                Broadcaster.broadcast(packetData)
-            } ?? false
-            if sent {
-                appendLog("Proof packet on air — \(bytes.count) bytes over UDP.", .info)
-            } else {
-                appendLog(
-                    "UDP broadcast didn't complete (check Local Network permission in System Settings → Privacy) — continuing to confirmation.",
-                    .error
-                )
-            }
+            appendLog(
+                "Received \"\(t.title ?? t.slug ?? "signal")\" — \(bytes.count) bytes over the WiFi radio. On air.",
+                .info
+            )
 
             var chirpSeconds = 0.0
             if station.chirpEnabled {
                 chirpSeconds = chirp.play(bytes)
-                if chirpSeconds == 0 {
-                    appendLog("Chirp unavailable (audio engine not running) — broadcasting silently.", .info)
+                if chirpSeconds > 0 {
+                    appendLog(String(format: "Chirp playing — %.1fs.", chirpSeconds), .info)
+                } else {
+                    appendLog("Chirp unavailable (audio engine not running) — on air silently.", .info)
                 }
             }
             chirpDuration = chirpSeconds
@@ -144,6 +161,7 @@ final class RelayEngine: ObservableObject {
             try? await Task.sleep(nanoseconds: UInt64(min(max(chirpSeconds, 1.2), 6.0) * 1_000_000_000))
 
             phase = .confirming
+            appendLog("Signing confirmation…", .info)
             let coord = station.effectiveCoordinate(from: locationProvider)
             let latStr = coord.map { String(format: "%.5f", $0.lat) } ?? ""
             let lonStr = coord.map { String(format: "%.5f", $0.lon) } ?? ""
@@ -178,12 +196,7 @@ final class RelayEngine: ObservableObject {
                     verified: res.signature_verified ?? false,
                     date: Date()
                 )
-                appendLog(
-                    sent
-                        ? "On air ✓ — signed confirmation delivered."
-                        : "Confirmation delivered (UDP send reported an issue).",
-                    .success
-                )
+                appendLog("On air ✓ — signed confirmation delivered.", .success)
                 phase = .confirmed
                 destroyPacket(afterSuccess: true)
             } else {
@@ -219,26 +232,6 @@ final class RelayEngine: ObservableObject {
     private func persistLifetime() {
         UserDefaults.standard.set(lifetimeRelayed, forKey: Self.lifetimeRelayedKey)
         UserDefaults.standard.set(lifetimeBytes, forKey: Self.lifetimeBytesKey)
-    }
-
-    /// Runs blocking work off the main actor with a deadline. Returns nil if
-    /// the deadline passes first (the orphaned work finishes in the background;
-    /// the station loop moves on instead of wedging). Explicitly nonisolated so
-    /// neither child task can inherit MainActor isolation.
-    private nonisolated static func withDeadline<T: Sendable>(
-        seconds: Double,
-        _ work: @escaping @Sendable () -> T
-    ) async -> T? {
-        await withTaskGroup(of: T?.self) { group in
-            group.addTask(priority: .userInitiated) { work() }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
-        }
     }
 
     private func appendLog(_ text: String, _ kind: LogEntry.Kind) {
