@@ -16,6 +16,25 @@ final class RelayEngine: ObservableObject {
     @Published private(set) var log: [LogEntry] = []
     @Published private(set) var confirmedCount = 0
 
+    // Live on-air state for the packet visualization + sonification playhead.
+    // The bytes exist ONLY while the packet is on the air — they are destroyed
+    // (cleared) the moment the broadcast cycle ends. This station retains
+    // nothing: pulling the signal down over WiFi IS the transmission, and the
+    // playback is one-time by design.
+    @Published private(set) var onAirBytes: [UInt8] = []
+    @Published private(set) var broadcastStartedAt: Date?
+    @Published private(set) var chirpDuration: Double = 0
+
+    // Station stats — this session + persisted lifetime totals.
+    @Published private(set) var pollCount = 0
+    @Published private(set) var sessionBytes = 0
+    @Published private(set) var sessionStartedAt: Date?
+    @Published private(set) var lifetimeRelayed: Int
+    @Published private(set) var lifetimeBytes: Int
+
+    private static let lifetimeRelayedKey = "station_lifetime_relayed"
+    private static let lifetimeBytesKey = "station_lifetime_bytes"
+
     let station: Station
     let locationProvider = LocationProvider()
     private let signer = Signer.load()
@@ -27,6 +46,10 @@ final class RelayEngine: ObservableObject {
 
     init(station: Station) {
         self.station = station
+        _lifetimeRelayed = Published(
+            initialValue: UserDefaults.standard.integer(forKey: Self.lifetimeRelayedKey))
+        _lifetimeBytes = Published(
+            initialValue: UserDefaults.standard.integer(forKey: Self.lifetimeBytesKey))
     }
 
     func setOnAir(_ on: Bool) {
@@ -37,13 +60,17 @@ final class RelayEngine: ObservableObject {
                 locationProvider.request()
             }
             phase = .listening
+            sessionStartedAt = Date()
+            pollCount = 0
+            sessionBytes = 0
             appendLog("Station online — listening for queued signals.", .info)
             loopTask = Task { [weak self] in await self?.runLoop() }
         } else {
             loopTask?.cancel()
             loopTask = nil
             phase = .offline
-            current = nil
+            sessionStartedAt = nil
+            destroyPacket(afterSuccess: false)
             appendLog("Station offline.", .info)
         }
     }
@@ -65,6 +92,7 @@ final class RelayEngine: ObservableObject {
 
         do {
             let feed = try await api.next(rig: station.rigName)
+            pollCount += 1
             guard let t = feed.transmission else {
                 if phase != .confirmed { phase = .listening }
                 return
@@ -79,6 +107,10 @@ final class RelayEngine: ObservableObject {
             let packetData = t.packet.flatMap { Data(base64Encoded: $0) }
                 ?? Data((t.title ?? t.id).utf8)
             let bytes = [UInt8](packetData)
+            // Live for the visualization + sonification playhead — and ONLY
+            // for the on-air moment; destroyPacket() wipes it on every exit.
+            onAirBytes = bytes
+            broadcastStartedAt = Date()
 
             // Bounded: the UDP send can block indefinitely on macOS if the
             // Local Network permission is pending/denied — never let it wedge
@@ -99,6 +131,7 @@ final class RelayEngine: ObservableObject {
             if station.chirpEnabled {
                 chirpSeconds = chirp.play(bytes)
             }
+            chirpDuration = chirpSeconds
             // Hold the on-air moment for at least the chirp's duration, but
             // never longer than a few seconds — a photo packet is ~2 KB and
             // would otherwise hold the station for over a minute.
@@ -114,6 +147,7 @@ final class RelayEngine: ObservableObject {
             guard let signature = signer.sign(payload) else {
                 appendLog("Signing failed — confirmation not sent.", .error)
                 phase = .listening
+                destroyPacket(afterSuccess: false)
                 return
             }
 
@@ -124,6 +158,10 @@ final class RelayEngine: ObservableObject {
 
             if res.ok == true {
                 confirmedCount += 1
+                sessionBytes += bytes.count
+                lifetimeRelayed += 1
+                lifetimeBytes += bytes.count
+                persistLifetime()
                 lastConfirmation = Confirmation(
                     title: t.title ?? "Untitled signal",
                     permalink: res.permalink ?? t.permalink,
@@ -141,16 +179,40 @@ final class RelayEngine: ObservableObject {
                     .success
                 )
                 phase = .confirmed
+                destroyPacket(afterSuccess: true)
             } else {
                 appendLog("Confirmation rejected: \(res.error ?? "unknown error").", .error)
                 phase = .listening
+                destroyPacket(afterSuccess: false)
             }
-            current = nil
         } catch {
             appendLog(error.localizedDescription, .error)
-            current = nil
             phase = .listening
+            destroyPacket(afterSuccess: false)
         }
+    }
+
+    /// The relay retains NOTHING: the pulled-down packet exists only for the
+    /// on-air moment. Called on every exit path of a broadcast cycle.
+    private func destroyPacket(afterSuccess: Bool) {
+        let had = !onAirBytes.isEmpty
+        onAirBytes = []
+        broadcastStartedAt = nil
+        chirpDuration = 0
+        current = nil
+        if had {
+            appendLog(
+                afterSuccess
+                    ? "Packet destroyed after broadcast — nothing retained on this station."
+                    : "Packet bytes cleared — nothing retained on this station.",
+                .info
+            )
+        }
+    }
+
+    private func persistLifetime() {
+        UserDefaults.standard.set(lifetimeRelayed, forKey: Self.lifetimeRelayedKey)
+        UserDefaults.standard.set(lifetimeBytes, forKey: Self.lifetimeBytesKey)
     }
 
     /// Runs blocking work off the main actor with a deadline. Returns nil if

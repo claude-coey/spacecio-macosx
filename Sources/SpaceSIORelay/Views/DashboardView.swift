@@ -65,10 +65,41 @@ struct DashboardView: View {
                 stat("CHIRP", station.chirpEnabled ? "ON" : "MUTED")
                 stat("LOCATION", locationSummary)
             }
+            statsStrip
         }
         .frame(maxWidth: .infinity)
         .padding(24)
         .glassCard()
+    }
+
+    /// Session + lifetime station stats — updates every second while on air.
+    private var statsStrip: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            HStack(spacing: 20) {
+                stat("UPTIME", uptimeText)
+                stat("POLLS", "\(engine.pollCount)")
+                stat("BYTES ON AIR", formatBytes(engine.sessionBytes))
+                stat("LIFETIME", "\(engine.lifetimeRelayed) · \(formatBytes(engine.lifetimeBytes))")
+            }
+        }
+        .padding(.top, 4)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+        }
+    }
+
+    private var uptimeText: String {
+        guard let start = engine.sessionStartedAt else { return "—" }
+        let s = Int(Date().timeIntervalSince(start))
+        if s < 60 { return "\(s)s" }
+        if s < 3600 { return "\(s / 60)m \(s % 60)s" }
+        return "\(s / 3600)h \((s % 3600) / 60)m"
+    }
+
+    private func formatBytes(_ n: Int) -> String {
+        if n < 1024 { return "\(n) B" }
+        if n < 1024 * 1024 { return String(format: "%.1f KB", Double(n) / 1024) }
+        return String(format: "%.1f MB", Double(n) / 1024 / 1024)
     }
 
     private var locationSummary: String {
@@ -110,10 +141,23 @@ struct DashboardView: View {
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.white)
                 .lineLimit(2)
-            WaveformView(
-                bytes: [UInt8](t.packet.flatMap { Data(base64Encoded: $0) } ?? Data()),
-                animate: engine.phase == .broadcasting
+
+            // Live packet: waveform of the real bytes with a sonification
+            // playhead sweeping in time with the chirp.
+            TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
+                WaveformView(
+                    bytes: engine.onAirBytes,
+                    animate: engine.phase == .broadcasting,
+                    progress: playheadProgress(at: timeline.date),
+                    maxBars: 60
+                )
+            }
+
+            PacketAnatomyView(
+                totalBytes: t.packet_bytes ?? engine.onAirBytes.count,
+                type: t.type
             )
+
             HStack(spacing: 14) {
                 if let pb = t.packet_bytes {
                     metaChip("\(pb) B packet")
@@ -123,10 +167,25 @@ struct DashboardView: View {
                 }
                 metaChip("UDP :\(Broadcaster.port)")
             }
+
+            Text("You're hearing the actual packet bytes — one note per byte, one-time playback. The packet is destroyed the moment this broadcast ends; the station retains nothing.")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.45))
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+    }
+
+    /// 0…1 sonification cursor across the waveform while the chirp plays.
+    private func playheadProgress(at now: Date) -> Double? {
+        guard engine.phase == .broadcasting,
+              let start = engine.broadcastStartedAt,
+              engine.chirpDuration > 0
+        else { return nil }
+        let p = now.timeIntervalSince(start) / engine.chirpDuration
+        return p > 1 ? nil : p
     }
 
     private func metaChip(_ text: String) -> some View {
@@ -271,6 +330,15 @@ struct ConfirmationCard: View {
                     detail("BROADCAST FROM", "location not shared")
                 }
                 detail("ED25519 SIG", "\(confirmation.signaturePrefix)…")
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "flame")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.ember.opacity(0.8))
+                Text("Packet destroyed after broadcast — this station retains nothing.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.45))
             }
 
             HStack(spacing: 10) {

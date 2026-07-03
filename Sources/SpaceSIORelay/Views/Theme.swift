@@ -90,11 +90,14 @@ struct StarfieldView: View {
 struct WaveformView: View {
     let bytes: [UInt8]
     var animate: Bool = false
+    /// 0…1 — draws a sweeping playhead over the bars (the sonification cursor).
+    var progress: Double? = nil
+    var maxBars: Int = 44
     @State private var pulsing = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 3) {
-            ForEach(Array(bytes.prefix(44).enumerated()), id: \.offset) { i, b in
+            ForEach(Array(bytes.prefix(maxBars).enumerated()), id: \.offset) { i, b in
                 Capsule()
                     .fill(color(i))
                     .frame(width: 4, height: 8 + CGFloat(b) / 255 * 42)
@@ -110,6 +113,17 @@ struct WaveformView: View {
             }
         }
         .frame(height: 54)
+        .overlay(alignment: .topLeading) {
+            if let p = progress {
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(Color.white.opacity(0.9))
+                        .frame(width: 2, height: geo.size.height)
+                        .shadow(color: Theme.signal.opacity(0.9), radius: 5)
+                        .offset(x: max(0, min(1, p)) * max(0, geo.size.width - 2))
+                }
+            }
+        }
         .onAppear { pulsing = animate }
         .onChange(of: animate) { pulsing = $0 }
     }
@@ -117,6 +131,58 @@ struct WaveformView: View {
     private func color(_ i: Int) -> Color {
         let palette: [Color] = [Theme.signal, Theme.beacon, Color(red: 0.9, green: 0.42, blue: 0.95)]
         return palette[i % palette.count].opacity(0.9)
+    }
+}
+
+/// Proportional strip of the packet's real anatomy: fixed framing + content
+/// hash overhead vs the compressed payload (and on-air thumbnail for media
+/// signals). Truthful — derived from actual byte counts only.
+struct PacketAnatomyView: View {
+    let totalBytes: Int
+    let type: String?
+
+    private var framing: Int { min(34, max(0, totalBytes)) }
+    private var payload: Int { max(0, totalBytes - framing) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Theme.signal.opacity(0.85))
+                        .frame(width: max(8, geo.size.width * fraction(framing)))
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Theme.beacon.opacity(0.75))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: 10)
+            HStack(spacing: 12) {
+                legend(Theme.signal, "framing + hash · \(framing) B")
+                legend(Theme.beacon, payloadLabel)
+            }
+        }
+    }
+
+    private var payloadLabel: String {
+        let media = (type == "photo" || type == "video")
+        return media
+            ? "payload + on-air thumbnail · \(payload) B"
+            : "compressed payload · \(payload) B"
+    }
+
+    private func fraction(_ part: Int) -> CGFloat {
+        guard totalBytes > 0 else { return 0 }
+        return CGFloat(part) / CGFloat(totalBytes)
+    }
+
+    private func legend(_ color: Color, _ text: String) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(text)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.5))
+        }
     }
 }
 
