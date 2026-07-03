@@ -41,6 +41,11 @@ final class RelayEngine: ObservableObject {
     private let chirp = Chirp()
     private var loopTask: Task<Void, Never>?
 
+    // Tracks whether the last poll failed for a connectivity reason, so we log
+    // the "offline" notice exactly ONCE on the online→offline edge (instead of
+    // once per 6s poll) and announce "Back online" the moment a poll succeeds.
+    private var connectionLost = false
+
     /// Base64 raw Ed25519 public key — the station's verifiable identity.
     var stationPublicKey: String { signer.publicKeyBase64 }
 
@@ -63,6 +68,7 @@ final class RelayEngine: ObservableObject {
             sessionStartedAt = Date()
             pollCount = 0
             sessionBytes = 0
+            connectionLost = false
             chirp.prewarm() // start the audio engine off the critical path
             appendLog("Station online — listening for queued signals.", .info)
             loopTask = Task { [weak self] in await self?.runLoop() }
@@ -122,6 +128,11 @@ final class RelayEngine: ObservableObject {
         do {
             let feed = try await api.next(rig: station.rigName)
             pollCount += 1
+            // A successful round-trip means connectivity is back.
+            if connectionLost {
+                connectionLost = false
+                appendLog("Back online — connection restored, resuming listening.", .success)
+            }
             guard let t = feed.transmission else {
                 if phase != .confirmed { phase = .listening }
                 return
@@ -226,9 +237,38 @@ final class RelayEngine: ObservableObject {
                 destroyPacket(afterSuccess: false)
             }
         } catch {
-            appendLog(error.localizedDescription, .error)
-            phase = .listening
+            if Self.isConnectivityError(error) {
+                // Log the offline notice once (not once per poll) and reflect it
+                // in the badge; keep polling so we auto-recover.
+                if !connectionLost {
+                    connectionLost = true
+                    appendLog(
+                        "The Internet connection appears to be offline. Retrying every few seconds…",
+                        .error
+                    )
+                }
+                phase = .offline
+            } else {
+                appendLog(error.localizedDescription, .error)
+                phase = .listening
+            }
             destroyPacket(afterSuccess: false)
+        }
+    }
+
+    /// True for the URLErrors that mean "no network right now" — so we can
+    /// treat them as a recoverable offline state (dedup the log, show OFFLINE,
+    /// announce recovery) rather than a normal per-poll error.
+    nonisolated static func isConnectivityError(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost,
+             .cannotFindHost, .dnsLookupFailed, .timedOut, .dataNotAllowed,
+             .internationalRoamingOff, .secureConnectionFailed,
+             .resourceUnavailable:
+            return true
+        default:
+            return false
         }
     }
 
