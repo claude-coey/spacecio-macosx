@@ -195,57 +195,8 @@ struct WaveformView: View {
     }
 }
 
-/// Proportional strip of the packet's real anatomy: fixed framing + content
-/// hash overhead vs the compressed payload (and on-air thumbnail for media
-/// signals). Truthful — derived from actual byte counts only.
-struct PacketAnatomyView: View {
-    let totalBytes: Int
-    let type: String?
-
-    private var framing: Int { min(34, max(0, totalBytes)) }
-    private var payload: Int { max(0, totalBytes - framing) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            GeometryReader { geo in
-                HStack(spacing: 2) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Theme.signal.opacity(0.85))
-                        .frame(width: max(8, geo.size.width * fraction(framing)))
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Theme.beacon.opacity(0.75))
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .frame(height: 10)
-            HStack(spacing: 12) {
-                legend(Theme.signal, "framing + hash · \(framing) B")
-                legend(Theme.beacon, payloadLabel)
-            }
-        }
-    }
-
-    private var payloadLabel: String {
-        let media = (type == "photo" || type == "video")
-        return media
-            ? "payload + on-air thumbnail · \(payload) B"
-            : "compressed payload · \(payload) B"
-    }
-
-    private func fraction(_ part: Int) -> CGFloat {
-        guard totalBytes > 0 else { return 0 }
-        return CGFloat(part) / CGFloat(totalBytes)
-    }
-
-    private func legend(_ color: Color, _ text: String) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(text)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.5))
-        }
-    }
-}
+// (The old two-segment PacketAnatomyView was replaced by PacketBlocksView —
+// the real field-labeled byte grid in Views/PacketBlocks.swift.)
 
 struct StatusPill: View {
     let phase: RelayEngine.Phase

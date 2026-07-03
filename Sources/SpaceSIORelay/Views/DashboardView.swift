@@ -153,21 +153,23 @@ struct DashboardView: View {
                 .foregroundStyle(.white)
                 .lineLimit(2)
 
-            // Live packet: waveform of the real bytes with a sonification
-            // playhead sweeping in time with the chirp.
+            // Live packet: waveform with the sonification playhead, and the
+            // REAL data blocks materializing byte-by-byte as they go on air.
             TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
-                WaveformView(
-                    bytes: engine.onAirBytes,
-                    animate: engine.phase == .broadcasting,
-                    progress: playheadProgress(at: timeline.date),
-                    time: timeline.date.timeIntervalSinceReferenceDate
-                )
+                VStack(alignment: .leading, spacing: 14) {
+                    WaveformView(
+                        bytes: engine.onAirBytes,
+                        animate: engine.phase == .broadcasting,
+                        progress: playheadProgress(at: timeline.date),
+                        time: timeline.date.timeIntervalSinceReferenceDate
+                    )
+                    PacketBlocksView(
+                        bytes: engine.onAirBytes,
+                        progress: blocksProgress(at: timeline.date),
+                        time: timeline.date.timeIntervalSinceReferenceDate
+                    )
+                }
             }
-
-            PacketAnatomyView(
-                totalBytes: t.packet_bytes ?? engine.onAirBytes.count,
-                type: t.type
-            )
 
             HStack(spacing: 14) {
                 if let pb = t.packet_bytes {
@@ -197,6 +199,14 @@ struct DashboardView: View {
         else { return nil }
         let p = now.timeIntervalSince(start) / engine.chirpDuration
         return p > 1 ? nil : p
+    }
+
+    /// 0…1 materialization sweep for the data blocks — runs over the on-air
+    /// hold (chirp duration, min 1.2s) then clamps fully lit.
+    private func blocksProgress(at now: Date) -> Double {
+        guard let start = engine.broadcastStartedAt else { return 1 }
+        let window = max(engine.chirpDuration, 1.2)
+        return min(1, now.timeIntervalSince(start) / window)
     }
 
     private func metaChip(_ text: String) -> some View {
