@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="SpaceSIO Relay"
 BUNDLE_ID="com.spacesio.relay"
-VERSION="1.3"
+VERSION="1.4"
 BIN="SpaceSIORelay"
 DIST="dist"
 

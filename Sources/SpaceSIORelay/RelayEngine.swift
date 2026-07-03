@@ -99,14 +99,16 @@ final class RelayEngine: ObservableObject {
     /// Short audible test (three notes) so a member can verify the audio path
     /// without waiting for a real signal. Fired from the mute toggle.
     func testChirp() {
-        chirp.prewarm()
-        let seconds = chirp.play([40, 120, 220])
-        appendLog(
-            seconds > 0
-                ? "Test chirp played."
-                : "Test chirp failed — audio engine not running (check output device / volume).",
-            seconds > 0 ? .info : .error
-        )
+        chirp.play([40, 120, 220]) { [weak self] ok in
+            Task { @MainActor in
+                self?.appendLog(
+                    ok
+                        ? "Test chirp played."
+                        : "Test chirp failed — audio engine not running (check output device / volume).",
+                    ok ? .info : .error
+                )
+            }
+        }
     }
 
     private func cycle() async {
@@ -145,13 +147,19 @@ final class RelayEngine: ObservableObject {
                 .info
             )
 
+            // Fire-and-forget: the loop only does the MATH for the chirp's
+            // duration — all actual audio happens on Chirp's own queue, so a
+            // wedged CoreAudio device can never stall the station again.
             var chirpSeconds = 0.0
             if station.chirpEnabled {
-                chirpSeconds = chirp.play(bytes)
-                if chirpSeconds > 0 {
-                    appendLog(String(format: "Chirp playing — %.1fs.", chirpSeconds), .info)
-                } else {
-                    appendLog("Chirp unavailable (audio engine not running) — on air silently.", .info)
+                chirpSeconds = Chirp.expectedDuration(bytes.count)
+                chirp.play(bytes) { [weak self] ok in
+                    Task { @MainActor in
+                        self?.appendLog(
+                            ok ? "Chirp playing." : "Chirp couldn't start (audio engine unavailable) — on air silently.",
+                            ok ? .info : .error
+                        )
+                    }
                 }
             }
             chirpDuration = chirpSeconds
