@@ -80,16 +80,29 @@ final class RelayEngine: ObservableObject {
                 ?? Data((t.title ?? t.id).utf8)
             let bytes = [UInt8](packetData)
 
-            let sent = await Task.detached(priority: .userInitiated) {
+            // Bounded: the UDP send can block indefinitely on macOS if the
+            // Local Network permission is pending/denied — never let it wedge
+            // the whole station loop (the claimed signal would stay "on air"
+            // forever and polling would stop). If the send doesn't finish in
+            // time we still proceed to the signed confirmation.
+            let sent = await Self.withDeadline(seconds: 15) {
                 Broadcaster.broadcast(packetData)
-            }.value
+            } ?? false
+            if !sent {
+                appendLog(
+                    "UDP broadcast didn't complete (check Local Network permission in System Settings → Privacy) — continuing to confirmation.",
+                    .error
+                )
+            }
 
             var chirpSeconds = 0.0
             if station.chirpEnabled {
                 chirpSeconds = chirp.play(bytes)
             }
-            // Hold the on-air moment for at least the chirp's duration.
-            try? await Task.sleep(nanoseconds: UInt64(max(chirpSeconds, 1.2) * 1_000_000_000))
+            // Hold the on-air moment for at least the chirp's duration, but
+            // never longer than a few seconds — a photo packet is ~2 KB and
+            // would otherwise hold the station for over a minute.
+            try? await Task.sleep(nanoseconds: UInt64(min(max(chirpSeconds, 1.2), 6.0) * 1_000_000_000))
 
             phase = .confirming
             let coord = station.effectiveCoordinate(from: locationProvider)
@@ -137,6 +150,25 @@ final class RelayEngine: ObservableObject {
             appendLog(error.localizedDescription, .error)
             current = nil
             phase = .listening
+        }
+    }
+
+    /// Runs blocking work off the main actor with a deadline. Returns nil if
+    /// the deadline passes first (the orphaned work finishes in the background;
+    /// the station loop moves on instead of wedging).
+    private static func withDeadline<T: Sendable>(
+        seconds: Double,
+        _ work: @escaping @Sendable () -> T
+    ) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask(priority: .userInitiated) { work() }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
         }
     }
 

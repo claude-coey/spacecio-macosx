@@ -20,9 +20,17 @@ final class Chirp {
         }
     }
 
+    /// At 0.03 s per byte a ~2 KB photo packet would chirp for over a minute
+    /// (and allocate a huge buffer) — chirp at most this many bytes (~4.8 s).
+    private static let maxChirpBytes = 160
+
     /// Plays the chirp; returns its duration in seconds (0 if audio failed).
+    /// Long packets are truncated to `maxChirpBytes` — the chirp is an audible
+    /// signature of the packet, not the transmission itself (the full bytes go
+    /// out over UDP regardless).
     @discardableResult
-    func play(_ bytes: [UInt8]) -> Double {
+    func play(_ allBytes: [UInt8]) -> Double {
+        let bytes = Array(allBytes.prefix(Self.maxChirpBytes))
         prepare()
         let sampleRate = 44_100.0
         let toneDuration = 0.03
