@@ -16,7 +16,7 @@ Together, many relay stations form a distributed network of broadcasters.
 
 ## Requirements
 
-- macOS 13+
+- macOS 15+
 - Apple Command Line Tools (`xcode-select --install`) **or** Xcode
 
 ## Run

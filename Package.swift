@@ -3,7 +3,10 @@ import PackageDescription
 
 let package = Package(
     name: "SpaceSIORelay",
-    platforms: [.macOS(.v13)],
+    // macOS 15+: keeps the Swift concurrency runtime on its modern
+    // executor-checking path (the legacy pre-15 path crashed in SwiftUI
+    // button dispatch on macOS 26).
+    platforms: [.macOS("15.0")],
     targets: [
         .executableTarget(
             name: "SpaceSIORelay",
