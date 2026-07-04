@@ -109,29 +109,113 @@ struct AppKitIconButton: NSViewRepresentable {
     }
 }
 
+/// The cosmic backdrop: a parallax, twinkling starfield with depth (so it reads
+/// a little 3D), a very subtle drifting aurora, and occasional shooting stars.
+/// All motion derives from the TimelineView clock (no per-frame state), so it's
+/// cheap and deterministic.
 struct StarfieldView: View {
     private struct Star {
-        let x: Double, y: Double, r: Double, phase: Double
+        let x: Double, y: Double, r: Double, phase: Double, depth: Double, drift: Double
+    }
+    private struct Meteor {
+        let period: Double, offset: Double, dur: Double
+        let x0: Double, y0: Double, dx: Double, dy: Double, len: Double
     }
 
-    private static let stars: [Star] = (0..<170).map { _ in
-        Star(
+    // depth 0 = far (small, dim, slow); 1 = near (big, bright, faster parallax).
+    private static let stars: [Star] = (0..<210).map { _ in
+        let depth = Double.random(in: 0...1)
+        return Star(
             x: .random(in: 0...1), y: .random(in: 0...1),
-            r: .random(in: 0.4...1.7), phase: .random(in: 0...(2 * .pi))
+            r: 0.4 + depth * 1.7,
+            phase: .random(in: 0...(2 * .pi)),
+            depth: depth,
+            drift: .random(in: -1...1)
         )
     }
 
+    private static let meteors: [Meteor] = (0..<4).map { i in
+        Meteor(
+            period: .random(in: 10...17),
+            offset: Double(i) * 3.3 + .random(in: 0...4),
+            dur: .random(in: 0.9...1.5),
+            x0: .random(in: -0.1...0.6),
+            y0: .random(in: -0.05...0.35),
+            dx: .random(in: 0.5...0.9),
+            dy: .random(in: 0.22...0.5),
+            len: .random(in: 0.10...0.18)
+        )
+    }
+
+    private static let auroraColors: [Color] = [Theme.signal, Theme.beacon, Theme.go]
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
             Canvas { ctx, size in
                 let t = timeline.date.timeIntervalSinceReferenceDate
-                for s in Self.stars {
-                    let alpha = 0.22 + 0.5 * (0.5 + 0.5 * sin(t * 0.8 + s.phase))
-                    let rect = CGRect(
-                        x: s.x * size.width, y: s.y * size.height,
-                        width: s.r * 2, height: s.r * 2
+                let W = size.width, H = size.height
+
+                // --- very subtle cosmic aurora: slow drifting radial blobs ---
+                for (i, color) in Self.auroraColors.enumerated() {
+                    let fi = Double(i)
+                    let cx = (0.25 + 0.5 * (0.5 + 0.5 * sin(t * 0.045 + fi * 2.1))) * W
+                    let cy = (0.18 + 0.7 * (0.5 + 0.5 * cos(t * 0.037 + fi * 1.3))) * H
+                    let R = min(W, H) * (0.5 + 0.12 * sin(t * 0.05 + fi))
+                    let a = 0.05 + 0.03 * (0.5 + 0.5 * sin(t * 0.06 + fi))
+                    let rect = CGRect(x: cx - R, y: cy - R, width: R * 2, height: R * 2)
+                    ctx.fill(
+                        Path(ellipseIn: rect),
+                        with: .radialGradient(
+                            Gradient(colors: [color.opacity(a), .clear]),
+                            center: CGPoint(x: cx, y: cy),
+                            startRadius: 0, endRadius: R
+                        )
                     )
+                }
+
+                // --- parallax starfield ---
+                for s in Self.stars {
+                    let speed = 0.004 + s.depth * 0.012
+                    var x = (s.x + t * speed * (0.5 + s.drift * 0.5))
+                        .truncatingRemainder(dividingBy: 1)
+                    if x < 0 { x += 1 }
+                    let twinkle = 0.35 + 0.65 * (0.5 + 0.5 * sin(t * (0.5 + s.depth) + s.phase))
+                    let alpha = (0.12 + 0.55 * s.depth) * twinkle
+                    let px = x * W, py = s.y * H, r = s.r
+                    if s.depth > 0.8 {
+                        let g = CGRect(x: px - r, y: py - r, width: r * 4, height: r * 4)
+                        ctx.fill(Path(ellipseIn: g), with: .color(Theme.signal.opacity(alpha * 0.18)))
+                    }
+                    let rect = CGRect(x: px, y: py, width: r * 2, height: r * 2)
                     ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(alpha)))
+                }
+
+                // --- occasional shooting stars ---
+                for m in Self.meteors {
+                    let phase = (t + m.offset).truncatingRemainder(dividingBy: m.period)
+                    guard phase >= 0, phase < m.dur else { continue }
+                    let p = phase / m.dur
+                    let hx = (m.x0 + m.dx * p) * W
+                    let hy = (m.y0 + m.dy * p) * H
+                    let tailLen = m.len * Double(max(W, H))
+                    let ang = atan2(m.dy * H, m.dx * W)
+                    let tx = hx - cos(ang) * tailLen
+                    let ty = hy - sin(ang) * tailLen
+                    let fade = sin(p * .pi)
+                    var trail = Path()
+                    trail.move(to: CGPoint(x: tx, y: ty))
+                    trail.addLine(to: CGPoint(x: hx, y: hy))
+                    ctx.stroke(
+                        trail,
+                        with: .linearGradient(
+                            Gradient(colors: [.clear, .white.opacity(0.9 * fade)]),
+                            startPoint: CGPoint(x: tx, y: ty),
+                            endPoint: CGPoint(x: hx, y: hy)
+                        ),
+                        lineWidth: 1.6
+                    )
+                    let head = CGRect(x: hx - 1.6, y: hy - 1.6, width: 3.2, height: 3.2)
+                    ctx.fill(Path(ellipseIn: head), with: .color(.white.opacity(fade)))
                 }
             }
         }
