@@ -27,13 +27,16 @@ struct DashboardView: View {
                 .frame(maxWidth: .infinity)
 
                 logPanel
-                    .frame(width: 310)
+                    .frame(width: 320)
             }
+            // Fill the available height so the columns (esp. the station log)
+            // stretch to the window bottom instead of leaving dead space.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(24)
-        // Consistent composition at any window size: content column caps out
-        // and centers instead of stretching edge-to-edge on wide windows.
-        .frame(maxWidth: 1180)
+        // Fluid width: fills the window, capped generously so it doesn't stretch
+        // absurdly on ultra-wide displays; centered within the window.
+        .frame(maxWidth: 1600)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
@@ -71,31 +74,34 @@ struct DashboardView: View {
     }
 
     private var onAirCard: some View {
-        VStack(spacing: 16) {
-            OnAirButton(isOn: engine.onAir, phase: engine.phase) {
-                engine.setOnAir(!engine.onAir)
-            }
-
-            // Live 3D globe — very slowly rotating Earth marking the station's
-            // approximate broadcast location.
-            VStack(spacing: 6) {
+        ZStack(alignment: .top) {
+            // Large 3D globe living in the BACKGROUND, filling the bottom two-
+            // thirds of the card as wide as the area, very slowly rotating and
+            // marking the station's approximate broadcast location.
+            GeometryReader { geo in
                 RelayGlobe(lat: globeCoordinate?.lat, lon: globeCoordinate?.lon)
-                    .frame(width: 168, height: 168)
-                Text(globeCoordinate != nil ? "BROADCAST ORIGIN" : "LOCATION PENDING")
-                    .font(.system(size: 9, weight: .bold))
-                    .kerning(1.4)
-                    .foregroundStyle(.white.opacity(0.4))
+                    .frame(width: geo.size.width, height: geo.size.height * 0.72)
+                    .position(x: geo.size.width / 2, y: geo.size.height * 0.62)
+                    .opacity(0.45)
+                    .allowsHitTesting(false)
             }
 
-            HStack(spacing: 20) {
-                stat("CONFIRMED", "\(engine.confirmedCount)")
-                stat("CHIRP", station.chirpEnabled ? "ON" : "MUTED")
-                stat("LOCATION", locationSummary)
+            VStack(spacing: 16) {
+                OnAirButton(isOn: engine.onAir, phase: engine.phase) {
+                    engine.setOnAir(!engine.onAir)
+                }
+                Spacer(minLength: 12)
+                HStack(spacing: 20) {
+                    stat("CONFIRMED", "\(engine.confirmedCount)")
+                    stat("CHIRP", station.chirpEnabled ? "ON" : "MUTED")
+                    stat("LOCATION", locationSummary)
+                }
+                statsStrip
             }
-            statsStrip
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(24)
         }
-        .frame(maxWidth: .infinity)
-        .padding(24)
+        .frame(maxWidth: .infinity, minHeight: 540)
         .glassCard()
     }
 
@@ -300,6 +306,34 @@ struct OnAirButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
+                // Siri-like glowing aura — a soft, multi-hue (blue/violet/green/
+                // cyan) blurred gradient that slowly rotates and breathes behind
+                // the dial. This is the main "glow".
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: [
+                                Color(red: 0.30, green: 0.55, blue: 1.00), // blue
+                                Theme.beacon,                              // violet
+                                Color(red: 0.85, green: 0.40, blue: 0.95), // magenta
+                                Theme.go,                                  // green
+                                Theme.signal,                              // cyan
+                                Color(red: 0.30, green: 0.55, blue: 1.00),
+                            ],
+                            center: .center
+                        )
+                    )
+                    .frame(width: 214, height: 214)
+                    .blur(radius: 34)
+                    .opacity(isOn ? 0.72 : 0.22)
+                    .scaleEffect(pulse ? 1.06 : 0.92)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(.linear(duration: 16).repeatForever(autoreverses: false), value: spin)
+                    .animation(
+                        isOn ? .easeInOut(duration: 2.4).repeatForever(autoreverses: true) : .default,
+                        value: pulse
+                    )
+
                 // Expanding pulse ring (breathes while on air).
                 Circle()
                     .strokeBorder(ringColor.opacity(pulse ? 0.05 : 0.4), lineWidth: 2)
@@ -310,23 +344,24 @@ struct OnAirButton: View {
                         value: pulse
                     )
 
-                // Slowly rotating scanner ring — reads as "actively working".
+                // A thin iridescent rotating ring for a hint of technical motion.
                 Circle()
                     .strokeBorder(
                         AngularGradient(
                             colors: [
-                                ringColor.opacity(0),
-                                ringColor.opacity(0.85),
-                                ringColor.opacity(0),
+                                Theme.signal.opacity(0),
+                                Theme.beacon.opacity(0.6),
+                                Theme.go.opacity(0.6),
+                                Theme.signal.opacity(0),
                             ],
                             center: .center
                         ),
-                        lineWidth: 2.5
+                        lineWidth: 2
                     )
                     .frame(width: 190, height: 190)
-                    .rotationEffect(.degrees(spin ? 360 : 0))
-                    .animation(.linear(duration: 7).repeatForever(autoreverses: false), value: spin)
-                    .opacity(isOn ? 0.95 : 0.30)
+                    .rotationEffect(.degrees(spin ? -360 : 0))
+                    .animation(.linear(duration: 12).repeatForever(autoreverses: false), value: spin)
+                    .opacity(isOn ? 0.8 : 0.25)
 
                 // Faint tick marks around the dial (technical instrument feel).
                 ForEach(0..<48, id: \.self) { i in
