@@ -134,11 +134,13 @@ struct StarfieldView: View {
         )
     }
 
-    private static let meteors: [Meteor] = (0..<4).map { i in
+    // Rare shooting stars: 2 meteors on long, staggered periods → on average
+    // one streak roughly every ~30s, not a steady shower.
+    private static let meteors: [Meteor] = (0..<2).map { i in
         Meteor(
-            period: .random(in: 10...17),
-            offset: Double(i) * 3.3 + .random(in: 0...4),
-            dur: .random(in: 0.9...1.5),
+            period: .random(in: 55...80),
+            offset: Double(i) * 27 + .random(in: 0...12),
+            dur: .random(in: 1.1...1.7),
             x0: .random(in: -0.1...0.6),
             y0: .random(in: -0.05...0.35),
             dx: .random(in: 0.5...0.9),
@@ -173,13 +175,13 @@ struct StarfieldView: View {
                     )
                 }
 
-                // --- parallax starfield ---
+                // --- parallax starfield (very slow drift) ---
                 for s in Self.stars {
-                    let speed = 0.004 + s.depth * 0.012
+                    let speed = 0.0006 + s.depth * 0.0022
                     var x = (s.x + t * speed * (0.5 + s.drift * 0.5))
                         .truncatingRemainder(dividingBy: 1)
                     if x < 0 { x += 1 }
-                    let twinkle = 0.35 + 0.65 * (0.5 + 0.5 * sin(t * (0.5 + s.depth) + s.phase))
+                    let twinkle = 0.35 + 0.65 * (0.5 + 0.5 * sin(t * (0.22 + s.depth * 0.45) + s.phase))
                     let alpha = (0.12 + 0.55 * s.depth) * twinkle
                     let px = x * W, py = s.y * H, r = s.r
                     if s.depth > 0.8 {
