@@ -275,28 +275,59 @@ struct OnAirButton: View {
     let phase: RelayEngine.Phase
     let action: () -> Void
     @State private var pulse = false
+    @State private var spin = false
 
     var body: some View {
         Button(action: action) {
             ZStack {
+                // Expanding pulse ring (breathes while on air).
                 Circle()
                     .strokeBorder(ringColor.opacity(pulse ? 0.05 : 0.4), lineWidth: 2)
-                    .frame(width: 168, height: 168)
+                    .frame(width: 176, height: 176)
                     .scaleEffect(pulse ? 1.12 : 0.98)
                     .animation(
                         isOn ? .easeInOut(duration: 1.6).repeatForever(autoreverses: true) : .default,
                         value: pulse
                     )
+
+                // Slowly rotating scanner ring — reads as "actively working".
+                Circle()
+                    .strokeBorder(
+                        AngularGradient(
+                            colors: [
+                                ringColor.opacity(0),
+                                ringColor.opacity(0.85),
+                                ringColor.opacity(0),
+                            ],
+                            center: .center
+                        ),
+                        lineWidth: 2.5
+                    )
+                    .frame(width: 190, height: 190)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(.linear(duration: 7).repeatForever(autoreverses: false), value: spin)
+                    .opacity(isOn ? 0.95 : 0.30)
+
+                // Faint tick marks around the dial (technical instrument feel).
+                ForEach(0..<48, id: \.self) { i in
+                    Rectangle()
+                        .fill(ringColor.opacity(i % 4 == 0 ? 0.35 : 0.12))
+                        .frame(width: 1.2, height: i % 4 == 0 ? 7 : 4)
+                        .offset(y: -100)
+                        .rotationEffect(.degrees(Double(i) / 48 * 360))
+                }
+                .opacity(isOn ? 0.9 : 0.4)
+
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [ringColor.opacity(0.35), Color.black.opacity(0.5)],
+                            colors: [ringColor.opacity(0.38), Color.black.opacity(0.55)],
                             center: .center, startRadius: 6, endRadius: 84
                         )
                     )
                     .frame(width: 148, height: 148)
                     .overlay(Circle().strokeBorder(ringColor.opacity(0.6), lineWidth: 1.5))
-                    .shadow(color: ringColor.opacity(isOn ? 0.5 : 0.15), radius: 26)
+                    .shadow(color: ringColor.opacity(isOn ? 0.6 : 0.15), radius: 30)
                 VStack(spacing: 6) {
                     Image(systemName: isOn ? "antenna.radiowaves.left.and.right" : "power")
                         .font(.system(size: 30, weight: .semibold))
@@ -307,9 +338,10 @@ struct OnAirButton: View {
                         .foregroundStyle(.white.opacity(0.9))
                 }
             }
+            .frame(width: 200, height: 200)
         }
         .buttonStyle(.plain)
-        .onAppear { pulse = isOn }
+        .onAppear { pulse = isOn; spin = true }
         .onChange(of: isOn) { pulse = $0 }
     }
 

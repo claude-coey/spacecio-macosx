@@ -19,10 +19,32 @@ struct GlassCard: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
+            // faint inner tint + top-lit sheen so cards read as glass panels on
+            // the busy starfield and feel a touch more three-dimensional.
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.05), Color.white.opacity(0.01)],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+            )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(Color.white.opacity(0.10))
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.30),
+                                Color.white.opacity(0.06),
+                                Theme.beacon.opacity(0.12),
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
             )
+            .shadow(color: Color.black.opacity(0.45), radius: 20, x: 0, y: 12)
     }
 }
 
@@ -289,6 +311,7 @@ struct WaveformView: View {
 
 struct StatusPill: View {
     let phase: RelayEngine.Phase
+    @State private var ping = false
 
     private var info: (String, Color) {
         switch phase {
@@ -301,12 +324,26 @@ struct StatusPill: View {
         }
     }
 
+    private var isLive: Bool { phase != .offline }
+
     var body: some View {
         HStack(spacing: 7) {
-            Circle()
-                .fill(info.1)
-                .frame(width: 8, height: 8)
-                .shadow(color: info.1.opacity(0.9), radius: 4)
+            ZStack {
+                // radar ping — a ring that expands + fades while the station is live
+                Circle()
+                    .stroke(info.1.opacity(0.7), lineWidth: 1.4)
+                    .frame(width: 8, height: 8)
+                    .scaleEffect(ping && isLive ? 2.6 : 1)
+                    .opacity(ping && isLive ? 0 : 0.9)
+                Circle()
+                    .fill(info.1)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: info.1.opacity(0.9), radius: 4)
+            }
+            .animation(
+                isLive ? .easeOut(duration: 1.8).repeatForever(autoreverses: false) : .default,
+                value: ping
+            )
             Text(info.0)
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .kerning(1.5)
@@ -316,5 +353,6 @@ struct StatusPill: View {
         .padding(.vertical, 6)
         .background(info.1.opacity(0.12), in: Capsule())
         .overlay(Capsule().strokeBorder(info.1.opacity(0.35)))
+        .onAppear { ping = true }
     }
 }
