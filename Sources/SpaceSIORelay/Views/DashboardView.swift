@@ -75,6 +75,18 @@ struct DashboardView: View {
             OnAirButton(isOn: engine.onAir, phase: engine.phase) {
                 engine.setOnAir(!engine.onAir)
             }
+
+            // Live 3D globe — very slowly rotating Earth marking the station's
+            // approximate broadcast location.
+            VStack(spacing: 6) {
+                RelayGlobe(lat: globeCoordinate?.lat, lon: globeCoordinate?.lon)
+                    .frame(width: 168, height: 168)
+                Text(globeCoordinate != nil ? "BROADCAST ORIGIN" : "LOCATION PENDING")
+                    .font(.system(size: 9, weight: .bold))
+                    .kerning(1.4)
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+
             HStack(spacing: 20) {
                 stat("CONFIRMED", "\(engine.confirmedCount)")
                 stat("CHIRP", station.chirpEnabled ? "ON" : "MUTED")
@@ -85,6 +97,14 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity)
         .padding(24)
         .glassCard()
+    }
+
+    /// The station's approximate coordinate for the globe marker (or nil).
+    private var globeCoordinate: (lat: Double, lon: Double)? {
+        if let c = station.effectiveCoordinate(from: engine.locationProvider) {
+            return (c.lat, c.lon)
+        }
+        return nil
     }
 
     /// Session + lifetime station stats — updates every second while on air.
