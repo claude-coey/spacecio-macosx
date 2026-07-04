@@ -10,15 +10,19 @@ struct DashboardView: View {
         VStack(spacing: 18) {
             header
             HStack(alignment: .top, spacing: 18) {
-                VStack(spacing: 18) {
-                    onAirCard
-                    if let t = engine.current {
-                        transmissionCard(t)
+                // Scrolls within the window so a large packet's byte grid can't
+                // grow the layout past the window height and push the header
+                // (logo) off the top.
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 18) {
+                        onAirCard
+                        if let t = engine.current {
+                            transmissionCard(t)
+                        }
+                        if let c = engine.lastConfirmation {
+                            ConfirmationCard(confirmation: c)
+                        }
                     }
-                    if let c = engine.lastConfirmation {
-                        ConfirmationCard(confirmation: c)
-                    }
-                    Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity)
 
