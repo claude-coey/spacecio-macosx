@@ -75,14 +75,19 @@ struct DashboardView: View {
 
     private var onAirCard: some View {
         ZStack(alignment: .top) {
-            // Large 3D globe living in the BACKGROUND, filling the bottom two-
-            // thirds of the card as wide as the area, very slowly rotating and
-            // marking the station's approximate broadcast location.
+            // Darker base so the on-air section reads deeper and the globe pops.
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(red: 0.01, green: 0.02, blue: 0.06).opacity(0.55))
+
+            // Large orthographic globe living in the BACKGROUND: a big, cut-off
+            // wireframe Earth (continents + graticule) with soft edge fades,
+            // very slowly rotating and marking the broadcast location.
             GeometryReader { geo in
+                let d = min(geo.size.width * 0.95, geo.size.height * 1.5)
                 RelayGlobe(lat: globeCoordinate?.lat, lon: globeCoordinate?.lon)
-                    .frame(width: geo.size.width, height: geo.size.height * 0.72)
-                    .position(x: geo.size.width / 2, y: geo.size.height * 0.62)
-                    .opacity(0.45)
+                    .frame(width: d, height: d)
+                    .position(x: geo.size.width / 2, y: geo.size.height * 0.6)
+                    .opacity(0.6)
                     .allowsHitTesting(false)
             }
 
