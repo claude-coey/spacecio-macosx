@@ -60,21 +60,23 @@ struct RelayGlobe: View {
                     )
                 )
 
-                // Graticule (parallels + meridians every 20°).
-                let gratColor = Color(red: 0.48, green: 0.36, blue: 1.0).opacity(0.13)
+                // Graticule (parallels + meridians every 20°) — kept very faint
+                // so the wireframe never competes with the foreground UI.
+                let gratColor = Color(red: 0.48, green: 0.36, blue: 1.0).opacity(0.07)
                 for p in stride(from: -60.0, through: 60.0, by: 20.0) {
                     var pts: [(Double, Double)] = []
                     for l in stride(from: -180.0, through: 180.0, by: 4.0) { pts.append((p, l)) }
-                    stroke(pts, gratColor, 0.6)
+                    stroke(pts, gratColor, 0.5)
                 }
                 for m in stride(from: -180.0, to: 180.0, by: 20.0) {
                     var pts: [(Double, Double)] = []
                     for p in stride(from: -88.0, through: 88.0, by: 4.0) { pts.append((p, m)) }
-                    stroke(pts, gratColor, 0.6)
+                    stroke(pts, gratColor, 0.5)
                 }
 
-                // Coastlines.
-                let coast = Color(red: 0.22, green: 0.86, blue: 0.95).opacity(0.55)
+                // Coastlines — dimmer + thinner than before so the continents
+                // read as a soft ghost behind the panel, not a hard wireframe.
+                let coast = Color(red: 0.22, green: 0.86, blue: 0.95).opacity(0.30)
                 for ring in WORLD_OUTLINE {
                     var pts: [(Double, Double)] = []
                     var i = 0
@@ -83,32 +85,58 @@ struct RelayGlobe: View {
                         i += 2
                     }
                     if let first = pts.first { pts.append(first) }
-                    stroke(pts, coast, 0.8)
+                    stroke(pts, coast, 0.7)
                 }
 
-                // Marker at the station location (near hemisphere only).
+                // Pulsing location beacon (near hemisphere only). Rides the
+                // rotating globe because it re-projects every frame; expanding
+                // rings + a bright breathing core make it read as a live beacon.
                 if let lat, let lon, let mp = project(lat, lon) {
                     let go = Color(red: 0.35, green: 0.95, blue: 0.65)
-                    ctx.fill(Path(ellipseIn: CGRect(x: mp.x - 7, y: mp.y - 7, width: 14, height: 14)),
-                             with: .color(go.opacity(0.22)))
-                    ctx.fill(Path(ellipseIn: CGRect(x: mp.x - 3, y: mp.y - 3, width: 6, height: 6)),
-                             with: .color(go))
-                    ctx.stroke(Path(ellipseIn: CGRect(x: mp.x - 3, y: mp.y - 3, width: 6, height: 6)),
-                               with: .color(.white.opacity(0.85)), lineWidth: 0.8)
+                    let cycle = 2.4
+                    let base = t.truncatingRemainder(dividingBy: cycle) / cycle // 0…1
+
+                    // Two staggered expanding rings.
+                    for k in 0..<2 {
+                        let kp = (base + Double(k) * 0.5).truncatingRemainder(dividingBy: 1)
+                        let rr = 3.5 + kp * 17
+                        let a = (1 - kp) * (1 - kp) * 0.7 // ease-out fade
+                        ctx.stroke(
+                            Path(ellipseIn: CGRect(x: mp.x - rr, y: mp.y - rr, width: rr * 2, height: rr * 2)),
+                            with: .color(go.opacity(a)), lineWidth: 1.5
+                        )
+                    }
+
+                    // Soft glow halo that breathes with the pulse.
+                    let breathe = 0.5 + 0.5 * sin(t * (2 * .pi / cycle))
+                    let gr = 8.0 + breathe * 4
+                    ctx.fill(
+                        Path(ellipseIn: CGRect(x: mp.x - gr, y: mp.y - gr, width: gr * 2, height: gr * 2)),
+                        with: .radialGradient(
+                            Gradient(colors: [go.opacity(0.55), .clear]),
+                            center: mp, startRadius: 0, endRadius: gr
+                        )
+                    )
+
+                    // Bright core + white hotspot.
+                    ctx.fill(Path(ellipseIn: CGRect(x: mp.x - 3, y: mp.y - 3, width: 6, height: 6)), with: .color(go))
+                    ctx.fill(Path(ellipseIn: CGRect(x: mp.x - 1.3, y: mp.y - 1.3, width: 2.6, height: 2.6)), with: .color(.white))
                 }
 
                 // Thin bright limb.
-                ctx.stroke(Path(ellipseIn: disc), with: .color(.white.opacity(0.16)), lineWidth: 1)
+                ctx.stroke(Path(ellipseIn: disc), with: .color(.white.opacity(0.12)), lineWidth: 1)
             }
         }
-        // Soft radial edge-fade so the sphere melts into the panel.
+        // Soft radial edge-fade so the sphere melts into the panel — fades
+        // earlier and to nothing so no hard continent edges reach the UI.
         .mask {
             GeometryReader { g in
                 RadialGradient(
                     gradient: Gradient(stops: [
                         .init(color: .white, location: 0.0),
-                        .init(color: .white, location: 0.7),
-                        .init(color: .white.opacity(0), location: 1.0),
+                        .init(color: .white, location: 0.42),
+                        .init(color: .white.opacity(0.35), location: 0.72),
+                        .init(color: .white.opacity(0), location: 0.94),
                     ]),
                     center: .center,
                     startRadius: 0,

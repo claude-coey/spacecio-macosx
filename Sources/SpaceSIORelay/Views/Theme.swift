@@ -14,11 +14,25 @@ enum Theme {
     )
 }
 
+extension View {
+    /// Apply Apple's Liquid Glass material to a shape when running on macOS 26+
+    /// (`glassEffect`), gracefully falling back to the frosted `.ultraThinMaterial`
+    /// on older systems. One place so every card/tile gets the same treatment.
+    @ViewBuilder
+    func liquidGlass<S: Shape>(in shape: S) -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular, in: shape)
+        } else {
+            self.background(.ultraThinMaterial, in: shape)
+        }
+    }
+}
+
 struct GlassCard: ViewModifier {
     var cornerRadius: CGFloat = 20
     func body(content: Content) -> some View {
         content
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
+            .liquidGlass(in: RoundedRectangle(cornerRadius: cornerRadius))
             // faint inner tint + top-lit sheen so cards read as glass panels on
             // the busy starfield and feel a touch more three-dimensional.
             .background(
@@ -350,8 +364,9 @@ struct StatTile: View {
         .padding(.horizontal, 8)
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white.opacity(hovering ? 0.055 : 0.03))
+                .fill(Color.white.opacity(hovering ? 0.05 : 0.02))
         )
+        .liquidGlass(in: RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(

@@ -83,11 +83,11 @@ struct DashboardView: View {
             // wireframe Earth (continents + graticule) with soft edge fades,
             // very slowly rotating and marking the broadcast location.
             GeometryReader { geo in
-                let d = min(geo.size.width * 0.95, geo.size.height * 1.5)
+                let d = min(geo.size.width * 0.95, geo.size.height * 1.6)
                 RelayGlobe(lat: globeCoordinate?.lat, lon: globeCoordinate?.lon)
                     .frame(width: d, height: d)
-                    .position(x: geo.size.width / 2, y: geo.size.height * 0.6)
-                    .opacity(0.6)
+                    .position(x: geo.size.width / 2, y: geo.size.height * 0.58)
+                    .opacity(0.5)
                     .allowsHitTesting(false)
             }
 
@@ -95,13 +95,14 @@ struct DashboardView: View {
                 OnAirButton(isOn: engine.onAir, phase: engine.phase) {
                     engine.setOnAir(!engine.onAir)
                 }
-                Spacer(minLength: 12)
+                .padding(.top, 8)
+                Spacer(minLength: 8)
                 statTiles
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(24)
         }
-        .frame(maxWidth: .infinity, minHeight: 540)
+        .frame(maxWidth: .infinity, minHeight: 400)
         .glassCard()
     }
 
@@ -351,94 +352,107 @@ struct OnAirButton: View {
     @State private var pulse = false
     @State private var spin = false
 
+    // Cyan→violet neon sweep used for the glowing rings (matches the reference).
+    private var ringGradient: AngularGradient {
+        AngularGradient(
+            colors: [
+                Theme.signal,                              // cyan
+                Color(red: 0.40, green: 0.80, blue: 1.00), // bright blue
+                Theme.beacon,                              // violet
+                Color(red: 0.85, green: 0.45, blue: 1.00), // magenta-violet
+                Theme.signal,                              // back to cyan
+            ],
+            center: .center
+        )
+    }
+
     var body: some View {
         Button(action: action) {
             ZStack {
-                // Siri-like glowing aura — a soft, multi-hue (blue/violet/green/
-                // cyan) blurred gradient that slowly rotates and breathes behind
-                // the dial. This is the main "glow".
-                Circle()
-                    .fill(
-                        AngularGradient(
-                            colors: [
-                                Color(red: 0.30, green: 0.55, blue: 1.00), // blue
-                                Theme.beacon,                              // violet
-                                Color(red: 0.85, green: 0.40, blue: 0.95), // magenta
-                                Theme.go,                                  // green
-                                Theme.signal,                              // cyan
-                                Color(red: 0.30, green: 0.55, blue: 1.00),
-                            ],
-                            center: .center
-                        )
-                    )
-                    .frame(width: 214, height: 214)
-                    .blur(radius: 34)
-                    .opacity(isOn ? 0.72 : 0.22)
-                    .scaleEffect(pulse ? 1.06 : 0.92)
-                    .rotationEffect(.degrees(spin ? 360 : 0))
-                    .animation(.linear(duration: 16).repeatForever(autoreverses: false), value: spin)
-                    .animation(
-                        isOn ? .easeInOut(duration: 2.4).repeatForever(autoreverses: true) : .default,
-                        value: pulse
-                    )
-
-                // Expanding pulse ring (breathes while on air).
-                Circle()
-                    .strokeBorder(ringColor.opacity(pulse ? 0.05 : 0.4), lineWidth: 2)
-                    .frame(width: 176, height: 176)
-                    .scaleEffect(pulse ? 1.12 : 0.98)
-                    .animation(
-                        isOn ? .easeInOut(duration: 1.6).repeatForever(autoreverses: true) : .default,
-                        value: pulse
-                    )
-
-                // A thin iridescent rotating ring for a hint of technical motion.
-                Circle()
-                    .strokeBorder(
-                        AngularGradient(
-                            colors: [
-                                Theme.signal.opacity(0),
-                                Theme.beacon.opacity(0.6),
-                                Theme.go.opacity(0.6),
-                                Theme.signal.opacity(0),
-                            ],
-                            center: .center
-                        ),
-                        lineWidth: 2
-                    )
-                    .frame(width: 190, height: 190)
-                    .rotationEffect(.degrees(spin ? -360 : 0))
-                    .animation(.linear(duration: 12).repeatForever(autoreverses: false), value: spin)
-                    .opacity(isOn ? 0.8 : 0.25)
-
-                // Faint tick marks around the dial (technical instrument feel).
-                ForEach(0..<48, id: \.self) { i in
-                    Rectangle()
-                        .fill(ringColor.opacity(i % 4 == 0 ? 0.35 : 0.12))
-                        .frame(width: 1.2, height: i % 4 == 0 ? 7 : 4)
-                        .offset(y: -100)
-                        .rotationEffect(.degrees(Double(i) / 48 * 360))
-                }
-                .opacity(isOn ? 0.9 : 0.4)
-
+                // 1. Broad outer bloom — a soft radial wash of light behind the
+                //    dial that gently breathes. This is the ambient glow.
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [ringColor.opacity(0.38), Color.black.opacity(0.55)],
-                            center: .center, startRadius: 6, endRadius: 84
+                            colors: [
+                                Theme.signal.opacity(0.55),
+                                Theme.beacon.opacity(0.30),
+                                .clear,
+                            ],
+                            center: .center, startRadius: 30, endRadius: 150
                         )
                     )
-                    .frame(width: 148, height: 148)
-                    .overlay(Circle().strokeBorder(ringColor.opacity(0.6), lineWidth: 1.5))
-                    .shadow(color: ringColor.opacity(isOn ? 0.6 : 0.15), radius: 30)
+                    .frame(width: 300, height: 300)
+                    .blur(radius: 26)
+                    .opacity(isOn ? 0.9 : 0.28)
+                    .scaleEffect(pulse ? 1.06 : 0.92)
+                    .animation(
+                        isOn ? .easeInOut(duration: 2.6).repeatForever(autoreverses: true) : .default,
+                        value: pulse
+                    )
+
+                // 2. Bloom ring — a thick, heavily blurred copy of the main ring
+                //    that reads as the neon "glow" spilling off the crisp ring.
+                Circle()
+                    .stroke(ringGradient, lineWidth: 11)
+                    .frame(width: 178, height: 178)
+                    .blur(radius: 16)
+                    .opacity(isOn ? 0.95 : 0.30)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(.linear(duration: 20).repeatForever(autoreverses: false), value: spin)
+
+                // 3. Faint radar ticks + the 12-o'clock index line.
+                ForEach(0..<60, id: \.self) { i in
+                    Rectangle()
+                        .fill(Theme.signal.opacity(i % 5 == 0 ? 0.30 : 0.10))
+                        .frame(width: 1, height: i == 0 ? 12 : (i % 5 == 0 ? 6 : 3))
+                        .offset(y: -104)
+                        .rotationEffect(.degrees(Double(i) / 60 * 360))
+                }
+                .opacity(isOn ? 0.85 : 0.35)
+
+                // 4. Main crisp neon ring — bright, thin, with a tight glow.
+                Circle()
+                    .stroke(ringGradient, lineWidth: 3.5)
+                    .frame(width: 178, height: 178)
+                    .shadow(color: Theme.signal.opacity(isOn ? 0.9 : 0.2), radius: 9)
+                    .shadow(color: Theme.beacon.opacity(isOn ? 0.7 : 0.15), radius: 16)
+                    .opacity(isOn ? 1 : 0.55)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(.linear(duration: 20).repeatForever(autoreverses: false), value: spin)
+
+                // 5. Inner + outer hairline rings for a crisp double-ring edge.
+                Circle()
+                    .strokeBorder(.white.opacity(isOn ? 0.45 : 0.18), lineWidth: 1)
+                    .frame(width: 168, height: 168)
+                Circle()
+                    .strokeBorder(Theme.beacon.opacity(isOn ? 0.4 : 0.15), lineWidth: 1)
+                    .frame(width: 194, height: 194)
+
+                // 6. Dark glassy hub with the antenna glyph.
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                ringColor.opacity(0.30),
+                                Color(red: 0.02, green: 0.04, blue: 0.10).opacity(0.92),
+                            ],
+                            center: .center, startRadius: 4, endRadius: 86
+                        )
+                    )
+                    .frame(width: 150, height: 150)
+                    .overlay(Circle().strokeBorder(ringColor.opacity(0.5), lineWidth: 1))
+                    .shadow(color: ringColor.opacity(isOn ? 0.5 : 0.12), radius: 24)
+
                 VStack(spacing: 6) {
                     Image(systemName: isOn ? "antenna.radiowaves.left.and.right" : "power")
                         .font(.system(size: 30, weight: .semibold))
                         .foregroundStyle(.white)
+                        .shadow(color: Theme.signal.opacity(isOn ? 0.8 : 0), radius: 8)
                     Text(isOn ? "ON AIR" : "GO ON AIR")
                         .font(.system(size: 12, weight: .heavy, design: .monospaced))
                         .kerning(2)
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(.white.opacity(0.92))
                 }
             }
             .frame(width: 200, height: 200)
