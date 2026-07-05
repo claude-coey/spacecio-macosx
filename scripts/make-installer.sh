@@ -18,9 +18,32 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="SpaceSIO Relay"
 BUNDLE_ID="com.spacesio.relay"
-VERSION="1.7"
 BIN="SpaceSIORelay"
 DIST="dist"
+
+# --- Auto-increment the version on EVERY build ---------------------------------
+# Each run bumps the marketing version's trailing component (e.g. 1.7 -> 1.8)
+# AND a monotonic integer build number (CFBundleVersion), so no two builds ever
+# share a version. The current values persist in VERSION / BUILD next to the
+# script; they're read, incremented, and written back before the build.
+VERSION_FILE="VERSION"
+BUILD_FILE="BUILD"
+
+CUR_VERSION="$([ -f "$VERSION_FILE" ] && tr -d '[:space:]' < "$VERSION_FILE" || true)"
+[ -z "$CUR_VERSION" ] && CUR_VERSION="1.7"
+V_MAJOR="${CUR_VERSION%.*}"
+V_MINOR="${CUR_VERSION##*.}"
+case "$V_MINOR" in ''|*[!0-9]*) V_MINOR=0 ;; esac
+V_MINOR=$((V_MINOR + 1))
+VERSION="${V_MAJOR}.${V_MINOR}"
+printf '%s\n' "$VERSION" > "$VERSION_FILE"
+
+BUILD_NUMBER="$([ -f "$BUILD_FILE" ] && tr -d '[:space:]' < "$BUILD_FILE" || true)"
+case "$BUILD_NUMBER" in ''|*[!0-9]*) BUILD_NUMBER=7 ;; esac
+BUILD_NUMBER=$((BUILD_NUMBER + 1))
+printf '%s\n' "$BUILD_NUMBER" > "$BUILD_FILE"
+
+echo "▸ Version $VERSION (build $BUILD_NUMBER)"
 
 echo "▸ Building release binary…"
 if swift build -c release --arch arm64 --arch x86_64 2>/dev/null; then
@@ -68,7 +91,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleShortVersionString</key>
 	<string>$VERSION</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$BUILD_NUMBER</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
 	<key>LSApplicationCategoryType</key>
