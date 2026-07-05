@@ -309,6 +309,75 @@ struct WaveformView: View {
 // (The old two-segment PacketAnatomyView was replaced by PacketBlocksView —
 // the real field-labeled byte grid in Views/PacketBlocks.swift.)
 
+/// A single boxed metric tile: a tinted SF Symbol, an all-caps label, and a
+/// mono value, inside a soft glass panel. `glow` makes the icon gently breathe
+/// and casts a colored halo (used for "live" metrics like a confirmed count),
+/// and the whole tile lifts + brightens its border on hover for a tactile feel.
+struct StatTile: View {
+    let icon: String
+    let label: String
+    let value: String
+    var tint: Color = Theme.signal
+    var glow: Bool = false
+
+    @State private var breathe = false
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(tint)
+                .shadow(color: tint.opacity(glow ? 0.75 : 0), radius: glow ? 9 : 0)
+                .scaleEffect(glow && breathe ? 1.10 : 1)
+                .frame(height: 18)
+
+            Text(label)
+                .font(.system(size: 8.5, weight: .bold))
+                .kerning(1.1)
+                .foregroundStyle(.white.opacity(0.42))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+
+            Text(value)
+                .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.white.opacity(hovering ? 0.055 : 0.03))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            tint.opacity(hovering ? 0.5 : 0.16),
+                            Color.white.opacity(0.05),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: tint.opacity(hovering ? 0.25 : 0), radius: 12, y: 4)
+        .offset(y: hovering ? -2 : 0)
+        .animation(.easeOut(duration: 0.18), value: hovering)
+        .onHover { hovering = $0 }
+        .onAppear {
+            guard glow else { return }
+            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+                breathe = true
+            }
+        }
+    }
+}
+
 struct StatusPill: View {
     let phase: RelayEngine.Phase
     @State private var ping = false

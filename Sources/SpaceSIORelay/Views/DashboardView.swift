@@ -91,17 +91,12 @@ struct DashboardView: View {
                     .allowsHitTesting(false)
             }
 
-            VStack(spacing: 16) {
+            VStack(spacing: 18) {
                 OnAirButton(isOn: engine.onAir, phase: engine.phase) {
                     engine.setOnAir(!engine.onAir)
                 }
                 Spacer(minLength: 12)
-                HStack(spacing: 20) {
-                    stat("CONFIRMED", "\(engine.confirmedCount)")
-                    stat("CHIRP", station.chirpEnabled ? "ON" : "MUTED")
-                    stat("LOCATION", locationSummary)
-                }
-                statsStrip
+                statTiles
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(24)
@@ -118,19 +113,45 @@ struct DashboardView: View {
         return nil
     }
 
-    /// Session + lifetime station stats — updates every second while on air.
-    private var statsStrip: some View {
+    /// The full metric strip: seven boxed icon tiles in one row, re-rendered
+    /// every second so the live counters (uptime, polls, bytes) tick.
+    private var statTiles: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            HStack(spacing: 20) {
-                stat("UPTIME", uptimeText)
-                stat("POLLS", "\(engine.pollCount)")
-                stat("BYTES ON AIR", formatBytes(engine.sessionBytes))
-                stat("LIFETIME", "\(engine.lifetimeRelayed) · \(formatBytes(engine.lifetimeBytes))")
+            HStack(spacing: 12) {
+                StatTile(
+                    icon: "checkmark.shield.fill", label: "CONFIRMED",
+                    value: "\(engine.confirmedCount)",
+                    tint: Theme.go, glow: engine.confirmedCount > 0
+                )
+                StatTile(
+                    icon: station.chirpEnabled ? "waveform" : "speaker.slash.fill",
+                    label: "CHIRP",
+                    value: station.chirpEnabled ? "ON" : "MUTED",
+                    tint: station.chirpEnabled ? Theme.go : Color.gray,
+                    glow: station.chirpEnabled && engine.phase == .broadcasting
+                )
+                StatTile(
+                    icon: "mappin.and.ellipse", label: "LOCATION",
+                    value: locationSummary, tint: Theme.signal
+                )
+                StatTile(
+                    icon: "clock", label: "UPTIME",
+                    value: uptimeText, tint: Theme.signal
+                )
+                StatTile(
+                    icon: "chart.bar.fill", label: "POLLS",
+                    value: "\(engine.pollCount)", tint: Theme.beacon
+                )
+                StatTile(
+                    icon: "icloud.and.arrow.up", label: "BYTES ON AIR",
+                    value: formatBytes(engine.sessionBytes), tint: Theme.beacon
+                )
+                StatTile(
+                    icon: "hourglass", label: "LIFETIME",
+                    value: "\(engine.lifetimeRelayed) · \(formatBytes(engine.lifetimeBytes))",
+                    tint: Theme.signal
+                )
             }
-        }
-        .padding(.top, 4)
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
         }
     }
 
@@ -153,20 +174,6 @@ struct DashboardView: View {
             return String(format: "≈ %.1f, %.1f", c.lat, c.lon)
         }
         return station.locationMode == .automatic ? engine.locationProvider.status : "Not set"
-    }
-
-    private func stat(_ label: String, _ value: String) -> some View {
-        VStack(spacing: 3) {
-            Text(label)
-                .font(.system(size: 9, weight: .bold))
-                .kerning(1.2)
-                .foregroundStyle(.white.opacity(0.4))
-            Text(value)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity)
     }
 
     private func transmissionCard(_ t: Transmission) -> some View {
@@ -265,13 +272,16 @@ struct DashboardView: View {
                     .foregroundStyle(.white.opacity(0.4))
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 11) {
                     ForEach(engine.log) { entry in
-                        HStack(alignment: .top, spacing: 8) {
-                            Circle()
-                                .fill(color(for: entry.kind))
-                                .frame(width: 6, height: 6)
-                                .padding(.top, 4)
+                        let g = glyph(for: entry)
+                        HStack(alignment: .top, spacing: 9) {
+                            Image(systemName: g.symbol)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(g.color)
+                                .shadow(color: g.color.opacity(0.55), radius: 4)
+                                .frame(width: 15, height: 15)
+                                .padding(.top, 1)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.text)
                                     .font(.system(size: 11))
@@ -282,8 +292,10 @@ struct DashboardView: View {
                                     .foregroundStyle(.white.opacity(0.35))
                             }
                         }
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
+                .animation(.easeOut(duration: 0.28), value: engine.log.count)
             }
         }
         .padding(18)
@@ -291,11 +303,42 @@ struct DashboardView: View {
         .glassCard()
     }
 
-    private func color(for kind: LogEntry.Kind) -> Color {
-        switch kind {
-        case .info: return Theme.signal
-        case .success: return Theme.go
-        case .error: return Theme.ember
+    /// Pick a contextual SF Symbol + color for a log line. Keyword matching
+    /// first (so "offline", "watchdog", "chirp", … each get a fitting glyph),
+    /// falling back to the entry's semantic kind.
+    private func glyph(for entry: LogEntry) -> (symbol: String, color: Color) {
+        let t = entry.text.lowercased()
+        if t.contains("offline") || t.contains("no internet") {
+            return ("wifi.slash", Theme.ember)
+        }
+        if t.contains("back online") || t.contains("connection restored") {
+            return ("wifi", Theme.go)
+        }
+        if t.contains("watchdog") || t.contains("abandon") {
+            return ("exclamationmark.triangle.fill", Theme.ember)
+        }
+        if t.contains("cancel") {
+            return ("xmark.circle.fill", .gray)
+        }
+        if t.contains("destroyed") || t.contains("retains nothing") {
+            return ("flame.fill", Theme.ember)
+        }
+        if t.contains("chirp") {
+            return ("waveform", Theme.beacon)
+        }
+        if t.contains("signing") || t.contains("signature") || t.contains("signed") {
+            return ("signature", Theme.signal)
+        }
+        if t.contains("on air") || t.contains("confirmation delivered") || t.contains("confirmed") {
+            return ("checkmark.seal.fill", Theme.go)
+        }
+        if t.contains("received") || t.contains("packet") || t.contains("wifi") {
+            return ("antenna.radiowaves.left.and.right", Theme.signal)
+        }
+        switch entry.kind {
+        case .info: return ("dot.radiowaves.left.and.right", Theme.signal)
+        case .success: return ("checkmark.circle.fill", Theme.go)
+        case .error: return ("exclamationmark.circle.fill", Theme.ember)
         }
     }
 }
