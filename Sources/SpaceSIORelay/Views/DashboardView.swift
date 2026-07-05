@@ -5,6 +5,8 @@ struct DashboardView: View {
     @EnvironmentObject var station: Station
     @EnvironmentObject var engine: RelayEngine
     @Binding var showSettings: Bool
+    /// Non-nil while the go-on-air boot sequence is playing (its start time).
+    @State private var bootStart: Date?
 
     var body: some View {
         VStack(spacing: 18) {
@@ -12,16 +14,22 @@ struct DashboardView: View {
             HStack(alignment: .top, spacing: 18) {
                 // Scrolls within the window so a large packet's byte grid can't
                 // grow the layout past the window height and push the header
-                // (logo) off the top.
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 18) {
-                        onAirCard
-                        if let t = engine.current {
-                            transmissionCard(t)
+                // (logo) off the top. The content is pinned to at least the
+                // viewport height so the on-air card fills the column (no dead
+                // space below) while still scrolling when a tall packet appears.
+                GeometryReader { colGeo in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 18) {
+                            onAirCard
+                                .frame(maxHeight: .infinity)
+                            if let t = engine.current {
+                                transmissionCard(t)
+                            }
+                            if let c = engine.lastConfirmation {
+                                ConfirmationCard(confirmation: c)
+                            }
                         }
-                        if let c = engine.lastConfirmation {
-                            ConfirmationCard(confirmation: c)
-                        }
+                        .frame(minHeight: colGeo.size.height, alignment: .top)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -79,31 +87,50 @@ struct DashboardView: View {
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color(red: 0.01, green: 0.02, blue: 0.06).opacity(0.55))
 
-            // Large orthographic globe living in the BACKGROUND: a big, cut-off
-            // wireframe Earth (continents + graticule) with soft edge fades,
-            // very slowly rotating and marking the broadcast location.
+            // Large orthographic globe filling the card and CLIPPED to it (never
+            // bleeds outside the box): a big wireframe Earth, slowly rotating,
+            // with a pulsing beacon at the station. The stat tiles' glass blurs
+            // it as it spins behind them.
             GeometryReader { geo in
-                let d = min(geo.size.width * 0.95, geo.size.height * 1.6)
+                let d = min(geo.size.width * 1.05, geo.size.height * 1.35)
                 RelayGlobe(lat: globeCoordinate?.lat, lon: globeCoordinate?.lon)
                     .frame(width: d, height: d)
-                    .position(x: geo.size.width / 2, y: geo.size.height * 0.58)
-                    .opacity(0.5)
+                    .position(x: geo.size.width / 2, y: geo.size.height * 0.5)
+                    .opacity(0.62)
                     .allowsHitTesting(false)
             }
 
-            VStack(spacing: 18) {
+            VStack(spacing: 0) {
                 OnAirButton(isOn: engine.onAir, phase: engine.phase) {
                     engine.setOnAir(!engine.onAir)
                 }
-                .padding(.top, 8)
-                Spacer(minLength: 8)
+                .padding(.top, 26)
+                Spacer(minLength: 24)
                 statTiles
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(24)
+
+            // Boot-up sequence overlay, plays when the station comes on air.
+            if let bootStart {
+                BootSequenceView(start: bootStart, phase: engine.phase)
+                    .allowsHitTesting(false)
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 400)
+        .frame(maxWidth: .infinity, minHeight: 380)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
         .glassCard()
+        .onChange(of: engine.onAir) { on in
+            if on {
+                let s = Date()
+                bootStart = s
+                DispatchQueue.main.asyncAfter(deadline: .now() + BootSequenceView.duration + 0.2) {
+                    if bootStart == s { bootStart = nil }
+                }
+            } else {
+                bootStart = nil
+            }
+        }
     }
 
     /// The station's approximate coordinate for the globe marker (or nil).
@@ -369,49 +396,84 @@ struct OnAirButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                // 1. Broad outer bloom — a soft radial wash of light behind the
-                //    dial that gently breathes. This is the ambient glow.
+                // 1. Siri-like living aura — a soft, multi-hue blurred angular
+                //    gradient that slowly ROTATES and BREATHES behind the dial.
+                //    This is the main lively glow.
                 Circle()
                     .fill(
-                        RadialGradient(
+                        AngularGradient(
                             colors: [
-                                Theme.signal.opacity(0.55),
-                                Theme.beacon.opacity(0.30),
-                                .clear,
+                                Color(red: 0.30, green: 0.55, blue: 1.00), // blue
+                                Theme.beacon,                              // violet
+                                Color(red: 0.88, green: 0.42, blue: 0.98), // magenta
+                                Theme.go,                                  // green
+                                Theme.signal,                              // cyan
+                                Color(red: 0.30, green: 0.55, blue: 1.00),
                             ],
-                            center: .center, startRadius: 30, endRadius: 150
+                            center: .center
                         )
                     )
-                    .frame(width: 300, height: 300)
-                    .blur(radius: 26)
-                    .opacity(isOn ? 0.9 : 0.28)
-                    .scaleEffect(pulse ? 1.06 : 0.92)
+                    .frame(width: 230, height: 230)
+                    .blur(radius: 36)
+                    .opacity(isOn ? 0.80 : 0.24)
+                    .scaleEffect(pulse ? 1.08 : 0.9)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(.linear(duration: 15).repeatForever(autoreverses: false), value: spin)
                     .animation(
-                        isOn ? .easeInOut(duration: 2.6).repeatForever(autoreverses: true) : .default,
+                        isOn ? .easeInOut(duration: 2.4).repeatForever(autoreverses: true) : .default,
                         value: pulse
                     )
 
-                // 2. Bloom ring — a thick, heavily blurred copy of the main ring
-                //    that reads as the neon "glow" spilling off the crisp ring.
+                // 2. Expanding pulse ring that breathes while on air.
                 Circle()
-                    .stroke(ringGradient, lineWidth: 11)
-                    .frame(width: 178, height: 178)
-                    .blur(radius: 16)
-                    .opacity(isOn ? 0.95 : 0.30)
-                    .rotationEffect(.degrees(spin ? 360 : 0))
-                    .animation(.linear(duration: 20).repeatForever(autoreverses: false), value: spin)
+                    .strokeBorder(ringColor.opacity(pulse ? 0.04 : 0.45), lineWidth: 2)
+                    .frame(width: 182, height: 182)
+                    .scaleEffect(pulse ? 1.14 : 0.98)
+                    .animation(
+                        isOn ? .easeInOut(duration: 1.7).repeatForever(autoreverses: true) : .default,
+                        value: pulse
+                    )
 
-                // 3. Faint radar ticks + the 12-o'clock index line.
+                // 3. Thick blurred bloom ring — the neon "glow" spilling off the
+                //    crisp ring; slowly rotates for shimmer.
+                Circle()
+                    .stroke(ringGradient, lineWidth: 12)
+                    .frame(width: 178, height: 178)
+                    .blur(radius: 17)
+                    .opacity(isOn ? 0.95 : 0.28)
+                    .rotationEffect(.degrees(spin ? 360 : 0))
+                    .animation(.linear(duration: 18).repeatForever(autoreverses: false), value: spin)
+
+                // 4. A thin iridescent counter-rotating ring for technical motion.
+                Circle()
+                    .strokeBorder(
+                        AngularGradient(
+                            colors: [
+                                Theme.signal.opacity(0),
+                                Theme.beacon.opacity(0.7),
+                                Theme.go.opacity(0.7),
+                                Theme.signal.opacity(0),
+                            ],
+                            center: .center
+                        ),
+                        lineWidth: 2
+                    )
+                    .frame(width: 196, height: 196)
+                    .rotationEffect(.degrees(spin ? -360 : 0))
+                    .animation(.linear(duration: 11).repeatForever(autoreverses: false), value: spin)
+                    .opacity(isOn ? 0.85 : 0.25)
+
+                // 5. Faint radar ticks + the 12-o'clock index line.
                 ForEach(0..<60, id: \.self) { i in
                     Rectangle()
-                        .fill(Theme.signal.opacity(i % 5 == 0 ? 0.30 : 0.10))
+                        .fill(Theme.signal.opacity(i % 5 == 0 ? 0.32 : 0.10))
                         .frame(width: 1, height: i == 0 ? 12 : (i % 5 == 0 ? 6 : 3))
                         .offset(y: -104)
                         .rotationEffect(.degrees(Double(i) / 60 * 360))
                 }
                 .opacity(isOn ? 0.85 : 0.35)
 
-                // 4. Main crisp neon ring — bright, thin, with a tight glow.
+                // 6. Main crisp neon ring — bright, thin, with a tight glow.
                 Circle()
                     .stroke(ringGradient, lineWidth: 3.5)
                     .frame(width: 178, height: 178)
@@ -419,22 +481,19 @@ struct OnAirButton: View {
                     .shadow(color: Theme.beacon.opacity(isOn ? 0.7 : 0.15), radius: 16)
                     .opacity(isOn ? 1 : 0.55)
                     .rotationEffect(.degrees(spin ? 360 : 0))
-                    .animation(.linear(duration: 20).repeatForever(autoreverses: false), value: spin)
+                    .animation(.linear(duration: 18).repeatForever(autoreverses: false), value: spin)
 
-                // 5. Inner + outer hairline rings for a crisp double-ring edge.
+                // 7. Inner hairline highlight ring.
                 Circle()
                     .strokeBorder(.white.opacity(isOn ? 0.45 : 0.18), lineWidth: 1)
                     .frame(width: 168, height: 168)
-                Circle()
-                    .strokeBorder(Theme.beacon.opacity(isOn ? 0.4 : 0.15), lineWidth: 1)
-                    .frame(width: 194, height: 194)
 
-                // 6. Dark glassy hub with the antenna glyph.
+                // 8. Dark glassy hub with the antenna glyph.
                 Circle()
                     .fill(
                         RadialGradient(
                             colors: [
-                                ringColor.opacity(0.30),
+                                ringColor.opacity(0.32),
                                 Color(red: 0.02, green: 0.04, blue: 0.10).opacity(0.92),
                             ],
                             center: .center, startRadius: 4, endRadius: 86
@@ -442,7 +501,7 @@ struct OnAirButton: View {
                     )
                     .frame(width: 150, height: 150)
                     .overlay(Circle().strokeBorder(ringColor.opacity(0.5), lineWidth: 1))
-                    .shadow(color: ringColor.opacity(isOn ? 0.5 : 0.12), radius: 24)
+                    .shadow(color: ringColor.opacity(isOn ? 0.55 : 0.12), radius: 26)
 
                 VStack(spacing: 6) {
                     Image(systemName: isOn ? "antenna.radiowaves.left.and.right" : "power")
@@ -455,7 +514,7 @@ struct OnAirButton: View {
                         .foregroundStyle(.white.opacity(0.92))
                 }
             }
-            .frame(width: 200, height: 200)
+            .frame(width: 210, height: 210)
         }
         .buttonStyle(.plain)
         .onAppear { pulse = isOn; spin = true }
@@ -556,6 +615,129 @@ struct ConfirmationCard: View {
             Text(value)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.85))
+        }
+    }
+}
+
+/// A short, cinematic "power-up" sequence that plays inside the on-air card the
+/// moment the station goes on air: a 3D-tilted burst of warp streaks and shock
+/// rings rising to face the viewer, a central ignition flare, a stepped status
+/// readout, and a final flash — so flipping on air feels like booting something
+/// powerful. Purely presentational, driven entirely by elapsed time.
+struct BootSequenceView: View {
+    let start: Date
+    var phase: RelayEngine.Phase = .listening
+    static let duration: Double = 2.8
+
+    // Deterministic warp-streak directions (evaluated once per process).
+    private static let rays: [Double] = (0..<44).map { _ in Double.random(in: 0 ..< (2 * .pi)) }
+
+    var body: some View {
+        TimelineView(.animation) { tl in
+            let e = max(0, tl.date.timeIntervalSince(start))
+            let p = min(1, e / Self.duration)
+
+            ZStack {
+                // Brief dark veil so the burst reads with contrast.
+                Color.black.opacity(veil(p))
+
+                // 3D warp field + expanding shock rings, tilted like a HUD that
+                // rises to face you and levels off as the boot completes.
+                Canvas { ctx, size in
+                    let cx = size.width / 2, cy = size.height / 2
+                    let maxR = hypot(size.width, size.height) / 2
+
+                    let warp = min(1, p / 0.75)
+                    for a in Self.rays {
+                        let r0 = maxR * (0.06 + 0.92 * warp)
+                        let r1 = r0 + maxR * 0.16 * (1 - warp)
+                        let alpha = (1 - warp) * 0.7
+                        guard alpha > 0.01 else { continue }
+                        var path = Path()
+                        path.move(to: CGPoint(x: cx + cos(a) * r0, y: cy + sin(a) * r0))
+                        path.addLine(to: CGPoint(x: cx + cos(a) * r1, y: cy + sin(a) * r1))
+                        ctx.stroke(path, with: .color(Theme.signal.opacity(alpha)), lineWidth: 1.6)
+                    }
+
+                    for k in 0..<3 {
+                        let kp = min(1, max(0, (p - Double(k) * 0.11) / 0.72))
+                        guard kp > 0 else { continue }
+                        let rr = maxR * kp
+                        let alpha = (1 - kp) * (1 - kp) * 0.75
+                        ctx.stroke(
+                            Path(ellipseIn: CGRect(x: cx - rr, y: cy - rr, width: rr * 2, height: rr * 2)),
+                            with: .color((k % 2 == 0 ? Theme.signal : Theme.beacon).opacity(alpha)),
+                            lineWidth: 2
+                        )
+                    }
+                }
+                .rotation3DEffect(.degrees(72 * (1 - eased(p))), axis: (x: 1, y: 0, z: 0), perspective: 0.7)
+                .rotationEffect(.degrees(45 * p))
+
+                // Central ignition flare.
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [.white, Theme.signal.opacity(0.6), .clear],
+                            center: .center, startRadius: 0, endRadius: 130
+                        )
+                    )
+                    .frame(width: 260, height: 260)
+                    .scaleEffect(0.2 + 1.35 * flare(p))
+                    .opacity(flare(p))
+
+                // Stepped status readout + a filling progress bar.
+                VStack(spacing: 10) {
+                    Text(label(p))
+                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                        .kerning(3)
+                        .foregroundStyle(.white)
+                        .shadow(color: Theme.signal.opacity(0.8), radius: 8)
+                    Capsule()
+                        .fill(.white.opacity(0.14))
+                        .frame(width: 170, height: 3)
+                        .overlay(alignment: .leading) {
+                            Capsule().fill(Theme.signal).frame(width: 170 * p, height: 3)
+                        }
+                }
+                .opacity(textOpacity(p))
+                .offset(y: 104)
+
+                // Final flash.
+                Color.white.opacity(flash(p))
+            }
+            .compositingGroup()
+        }
+    }
+
+    private func eased(_ p: Double) -> Double { 1 - pow(1 - p, 3) }
+
+    private func veil(_ p: Double) -> Double {
+        if p < 0.15 { return (p / 0.15) * 0.5 }
+        if p < 0.72 { return 0.5 }
+        return max(0, 0.5 * (1 - (p - 0.72) / 0.28))
+    }
+
+    private func flare(_ p: Double) -> Double {
+        max(0, 1 - abs(p - 0.82) / 0.16)
+    }
+
+    private func flash(_ p: Double) -> Double {
+        max(0, 1 - abs(p - 0.86) / 0.1) * 0.5
+    }
+
+    private func textOpacity(_ p: Double) -> Double {
+        if p < 0.1 { return p / 0.1 }
+        if p > 0.9 { return max(0, 1 - (p - 0.9) / 0.1) }
+        return 1
+    }
+
+    private func label(_ p: Double) -> String {
+        switch p {
+        case ..<0.35: return "INITIALIZING"
+        case ..<0.62: return "RADIO LINK"
+        case ..<0.9: return "CARRIER LOCKED"
+        default: return "ON AIR"
         }
     }
 }

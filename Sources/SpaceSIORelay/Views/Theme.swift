@@ -159,16 +159,34 @@ struct StarfieldView: View {
     }
 
     // depth 0 = far (small, dim, slow); 1 = near (big, bright, faster parallax).
-    private static let stars: [Star] = (0..<210).map { _ in
+    // Stars kept small and fine so the field reads as distant, not chunky.
+    private static let stars: [Star] = (0..<230).map { _ in
         let depth = Double.random(in: 0...1)
         return Star(
             x: .random(in: 0...1), y: .random(in: 0...1),
-            r: 0.4 + depth * 1.7,
+            r: 0.28 + depth * 1.05,
             phase: .random(in: 0...(2 * .pi)),
             depth: depth,
             drift: .random(in: -1...1)
         )
     }
+
+    // Occasional planets: each drifts slowly across the sky during a visible
+    // window on a long, staggered cycle, so a planet wanders past now and then.
+    private struct Planet {
+        let period: Double, offset: Double, visible: Double
+        let y: Double, size: Double
+        let core: Color, rim: Color
+        let ring: Bool
+    }
+    private static let planets: [Planet] = [
+        Planet(period: 165, offset: 24, visible: 78, y: 0.24, size: 52,
+               core: Color(red: 0.95, green: 0.62, blue: 0.38),
+               rim: Color(red: 1.0, green: 0.82, blue: 0.55), ring: true),
+        Planet(period: 232, offset: 150, visible: 96, y: 0.66, size: 34,
+               core: Color(red: 0.42, green: 0.62, blue: 0.95),
+               rim: Color(red: 0.62, green: 0.86, blue: 1.0), ring: false),
+    ]
 
     // Rare shooting stars: 2 meteors on long, staggered periods → on average
     // one streak roughly every ~30s, not a steady shower.
@@ -208,6 +226,57 @@ struct StarfieldView: View {
                             center: CGPoint(x: cx, y: cy),
                             startRadius: 0, endRadius: R
                         )
+                    )
+                }
+
+                // --- occasional wandering planets (behind the stars) ---
+                for pl in Self.planets {
+                    let ph = (t + pl.offset).truncatingRemainder(dividingBy: pl.period)
+                    guard ph >= 0, ph < pl.visible else { continue }
+                    let prog = ph / pl.visible               // 0…1 across the sky
+                    let fade = sin(prog * .pi)               // ease in/out at edges
+                    guard fade > 0.02 else { continue }
+                    let px = (-0.12 + 1.24 * prog) * W
+                    let py = pl.y * H + sin(prog * .pi * 2) * H * 0.02
+                    let rad = pl.size
+
+                    // Optional ring (drawn first, behind the disc).
+                    if pl.ring {
+                        let rw = rad * 2.4, rh = rad * 0.7
+                        let ringRect = CGRect(x: px - rw / 2, y: py - rh / 2, width: rw, height: rh)
+                        var ring = Path(ellipseIn: ringRect)
+                        ctx.stroke(ring, with: .color(pl.rim.opacity(0.22 * fade)), lineWidth: 2.2)
+                        ring = Path(ellipseIn: ringRect.insetBy(dx: 5, dy: 1.6))
+                        ctx.stroke(ring, with: .color(pl.rim.opacity(0.12 * fade)), lineWidth: 1.2)
+                    }
+
+                    // Soft outer glow.
+                    let glowR = rad * 1.7
+                    ctx.fill(
+                        Path(ellipseIn: CGRect(x: px - glowR, y: py - glowR, width: glowR * 2, height: glowR * 2)),
+                        with: .radialGradient(
+                            Gradient(colors: [pl.core.opacity(0.16 * fade), .clear]),
+                            center: CGPoint(x: px, y: py), startRadius: rad * 0.6, endRadius: glowR
+                        )
+                    )
+
+                    // The planet disc — lit from the upper-left.
+                    ctx.fill(
+                        Path(ellipseIn: CGRect(x: px - rad, y: py - rad, width: rad * 2, height: rad * 2)),
+                        with: .radialGradient(
+                            Gradient(colors: [
+                                pl.rim.opacity(0.9 * fade),
+                                pl.core.opacity(0.85 * fade),
+                                Color.black.opacity(0.55 * fade),
+                            ]),
+                            center: CGPoint(x: px - rad * 0.35, y: py - rad * 0.35),
+                            startRadius: 0, endRadius: rad * 1.15
+                        )
+                    )
+                    // Crisp rim light.
+                    ctx.stroke(
+                        Path(ellipseIn: CGRect(x: px - rad, y: py - rad, width: rad * 2, height: rad * 2)),
+                        with: .color(pl.rim.opacity(0.25 * fade)), lineWidth: 1
                     )
                 }
 
@@ -362,9 +431,11 @@ struct StatTile: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
         .padding(.horizontal, 8)
+        // Only a faint dark tint over the glass, so the spinning globe stays
+        // visible (blurred) behind the tile instead of a solid black box.
         .background(
             RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white.opacity(hovering ? 0.05 : 0.02))
+                .fill(Color.black.opacity(hovering ? 0.07 : 0.15))
         )
         .liquidGlass(in: RoundedRectangle(cornerRadius: 14))
         .overlay(
